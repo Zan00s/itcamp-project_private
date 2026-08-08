@@ -34,26 +34,22 @@ services:
     container_name: elouav-keycloak
     command: ["start-dev", "--import-realm"]
     environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/elouav
-      KC_DB_USERNAME: elouav
-      KC_DB_PASSWORD: elouav_dev
+      KC_DB: dev-file
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_HOSTNAME: localhost
       KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: 8180
     ports:
-      - "8090:8080"
+      - "8180:8180"
     volumes:
       - ./keycloak-config/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8180/realms/elouav"]
       interval: 10s
       timeout: 10s
-      retries: 15
+      retries: 20
+      start_period: 30s
 
   backend:
     build:
@@ -61,12 +57,17 @@ services:
       dockerfile: Dockerfile
     container_name: elouav-backend
     environment:
-      SPRING_PROFILES_ACTIVE: dev
-      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:8081/v1}
-      LLM_API_KEY: ${LLM_API_KEY:-dummy}
-      LLM_MODEL: ${LLM_MODEL:-qwen2.5-7b}
-      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-5000}
-      AI_FALLBACK_ENABLED: ${AI_FALLBACK_ENABLED:-true}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: elouav
+      DB_USER: elouav
+      DB_PASS: elouav_dev
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KEYCLOAK_URL: http://keycloak:8180
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://localhost:11434}
+      LLM_API_KEY: ${LLM_API_KEY:-test-key}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
     ports:
       - "8080:8080"
     depends_on:
@@ -82,6 +83,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: elouav-frontend
+    environment:
+      VITE_API_BASE: http://localhost:8080/api
+      VITE_KEYCLOAK_URL: http://localhost:8180/realms/elouav
+      VITE_REDIRECT_URI: http://localhost:3000/callback
     ports:
       - "3000:80"
     depends_on:

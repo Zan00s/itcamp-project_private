@@ -3,52 +3,45 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://postgres:5432/elouav
-    username: elouav
-    password: elouav_dev
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:elouav}
+    username: ${DB_USER:elouav}
+    password: ${DB_PASS:elouav_dev}
     driver-class-name: org.postgresql.Driver
-
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
 
   security:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: http://keycloak:8080/realms/elouav
-          jwk-set-uri: http://keycloak:8080/realms/elouav/protocol/openid-connect/certs
+          issuer-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/elouav
+          jwk-set-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/elouav/protocol/openid-connect/certs
 
   data:
     redis:
-      host: redis
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 
   jackson:
     module:
       kotlin:
         enabled: true
 
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
-  metrics:
-    export:
-      prometheus:
-        enabled: true
+        include: health,info
 
-# AI configuration
 ai:
   llm:
-    endpoint: ${LLM_ENDPOINT:http://localhost:8081/v1}
-    api-key: ${LLM_API_KEY:dummy}
-    model: ${LLM_MODEL:qwen2.5-7b}
-    timeout-ms: ${LLM_TIMEOUT_MS:5000}
-    max-retries: ${LLM_MAX_RETRIES:2}
-  fallback:
-    enabled: ${AI_FALLBACK_ENABLED:true}
+    endpoint: ${LLM_ENDPOINT:http://localhost:11434}
+    api-key: ${LLM_API_KEY:test-key}
+    model: ${LLM_MODEL:gpt-4o-mini}
 
 logging:
   level:
