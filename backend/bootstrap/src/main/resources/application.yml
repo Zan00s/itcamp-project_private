@@ -1,0 +1,56 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/elouav
+    username: elouav
+    password: elouav_dev
+    driver-class-name: org.postgresql.Driver
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://keycloak:8080/realms/elouav
+          jwk-set-uri: http://keycloak:8080/realms/elouav/protocol/openid-connect/certs
+
+  data:
+    redis:
+      host: redis
+      port: 6379
+
+  jackson:
+    module:
+      kotlin:
+        enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# AI configuration
+ai:
+  llm:
+    endpoint: ${LLM_ENDPOINT:http://localhost:8081/v1}
+    api-key: ${LLM_API_KEY:dummy}
+    model: ${LLM_MODEL:qwen2.5-7b}
+    timeout-ms: ${LLM_TIMEOUT_MS:5000}
+    max-retries: ${LLM_MAX_RETRIES:2}
+  fallback:
+    enabled: ${AI_FALLBACK_ENABLED:true}
+
+logging:
+  level:
+    ru.itcamp.elouav: DEBUG
+    org.springframework.security: DEBUG

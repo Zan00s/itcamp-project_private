@@ -1,0 +1,96 @@
+{
+  "realm": "elouav",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      { "name": "student", "description": "Обучающийся" },
+      { "name": "instructor", "description": "Преподаватель" },
+      { "name": "methodist", "description": "Методист" },
+      { "name": "admin", "description": "Администратор" }
+    ]
+  },
+  "groups": [
+    { "name": "students", "realmRoles": ["student"] },
+    { "name": "instructors", "realmRoles": ["instructor"] },
+    { "name": "methodists", "realmRoles": ["methodist"] },
+    { "name": "admins", "realmRoles": ["admin"] }
+  ],
+  "users": [
+    {
+      "username": "student",
+      "enabled": true,
+      "email": "student@elouav.local",
+      "firstName": "Иван",
+      "lastName": "Студентов",
+      "credentials": [
+        { "type": "password", "value": "student", "temporary": false }
+      ],
+      "realmRoles": ["student"],
+      "groups": ["students"]
+    },
+    {
+      "username": "instructor",
+      "enabled": true,
+      "email": "instructor@elouav.local",
+      "firstName": "Светлана",
+      "lastName": "Преподавателева",
+      "credentials": [
+        { "type": "password", "value": "instructor", "temporary": false }
+      ],
+      "realmRoles": ["instructor"],
+      "groups": ["instructors"]
+    },
+    {
+      "username": "methodist",
+      "enabled": true,
+      "email": "methodist@elouav.local",
+      "firstName": "Кирилл",
+      "lastName": "Методистов",
+      "credentials": [
+        { "type": "password", "value": "methodist", "temporary": false }
+      ],
+      "realmRoles": ["methodist"],
+      "groups": ["methodists"]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@elouav.local",
+      "firstName": "Админ",
+      "lastName": "Админов",
+      "credentials": [
+        { "type": "password", "value": "admin", "temporary": false }
+      ],
+      "realmRoles": ["admin"],
+      "groups": ["admins"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "elouav-frontend",
+      "name": "КТК ЭЛОУ-АВ Frontend",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:3000/callback"
+      ],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      }
+    },
+    {
+      "clientId": "elouav-backend",
+      "name": "КТК ЭЛОУ-АВ Backend",
+      "enabled": true,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ]
+}

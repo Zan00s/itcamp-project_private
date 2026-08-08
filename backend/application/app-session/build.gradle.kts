@@ -1,0 +1,11 @@
+plugins {
+    kotlin("jvm")
+}
+
+dependencies {
+    implementation(project(":backend:core:core-shared"))
+    implementation(project(":backend:core:core-sim"))
+    implementation(project(":backend:core:core-scenario"))
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+}

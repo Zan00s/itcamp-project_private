@@ -1,0 +1,58 @@
+# === Build artifacts ===
+build/
+dist/
+out/
+target/
+
+# === Gradle (backend) ===
+.gradle/
+*.gradle.lockfile
+!gradle-wrapper.jar
+
+# === Kotlin/JVM ===
+*.class
+*.jar
+hs_err_pid*
+
+# === Node/Frontend ===
+node_modules/
+.vite/
+*.tsbuildinfo
+next-env.d.ts
+
+# === IDE ===
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Docker ===
+docker-compose.override.yml
+
+# === Secrets / env ===
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# === Keycloak ===
+keycloak-data/
+
+# === PostgreSQL ===
+pgdata/
+
+# === Redis ===
+redis-data/
+
+# === Logs ===
+*.log
+logs/
