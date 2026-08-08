@@ -5,8 +5,8 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":backend:core:core-shared"))
-    implementation(project(":backend:core:core-ai"))
+    implementation(project(":core:core-shared"))
+    implementation(project(":core:core-ai"))
     implementation("org.springframework.boot:spring-boot-starter")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

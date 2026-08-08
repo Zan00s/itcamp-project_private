@@ -7,20 +7,20 @@ plugins {
 
 dependencies {
     // Application layer
-    implementation(project(":backend:application:app-sim"))
-    implementation(project(":backend:application:app-scenario"))
-    implementation(project(":backend:application:app-scoring"))
-    implementation(project(":backend:application:app-ai"))
-    implementation(project(":backend:application:app-session"))
+    implementation(project(":application:app-sim"))
+    implementation(project(":application:app-scenario"))
+    implementation(project(":application:app-scoring"))
+    implementation(project(":application:app-ai"))
+    implementation(project(":application:app-session"))
 
     // Infrastructure layer
-    implementation(project(":backend:infrastructure:infra-db"))
-    implementation(project(":backend:infrastructure:infra-web"))
-    implementation(project(":backend:infrastructure:infra-auth"))
-    implementation(project(":backend:infrastructure:infra-ai-llm"))
-    implementation(project(":backend:infrastructure:infra-ai-ml"))
-    implementation(project(":backend:infrastructure:infra-cache"))
-    implementation(project(":backend:infrastructure:infra-monitoring"))
+    implementation(project(":infrastructure:infra-db"))
+    implementation(project(":infrastructure:infra-web"))
+    implementation(project(":infrastructure:infra-auth"))
+    implementation(project(":infrastructure:infra-ai-llm"))
+    implementation(project(":infrastructure:infra-ai-ml"))
+    implementation(project(":infrastructure:infra-cache"))
+    implementation(project(":infrastructure:infra-monitoring"))
 
     // Spring Boot
     implementation("org.springframework.boot:spring-boot-starter")
