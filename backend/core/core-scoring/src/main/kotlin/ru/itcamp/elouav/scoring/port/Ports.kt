@@ -5,14 +5,14 @@ import ru.itcamp.elouav.shared.AppResult
 import ru.itcamp.elouav.shared.SessionId
 
 interface AuditReaderPort {
-    fun readBySession(sessionId: SessionId): Result<List<AuditRecord>>
+    fun readBySession(sessionId: SessionId): AppResult<List<AuditRecord>>
 }
 
 interface AIJudgePort {
-    suspend fun getSemanticsScore(sessionId: SessionId): Result<Double>
-    suspend fun getReasoningScore(sessionId: SessionId): Result<Double>
+    suspend fun getSemanticsScore(sessionId: SessionId): AppResult<Double>
+    suspend fun getReasoningScore(sessionId: SessionId): AppResult<Double>
 }
 
 interface VerdictWriter {
-    fun write(verdict: ru.itcamp.elouav.scoring.model.Verdict): Result<Unit>
+    fun write(verdict: ru.itcamp.elouav.scoring.model.Verdict): AppResult<Unit>
 }

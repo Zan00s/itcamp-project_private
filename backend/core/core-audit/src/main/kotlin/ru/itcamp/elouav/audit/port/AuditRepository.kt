@@ -5,10 +5,10 @@ import ru.itcamp.elouav.shared.AppResult
 import ru.itcamp.elouav.shared.SessionId
 
 interface AuditRepository {
-    fun append(record: AuditRecord): Result<Unit>
-    fun readBySession(sessionId: SessionId): Result<List<AuditRecord>>
+    fun append(record: AuditRecord): AppResult<Unit>
+    fun readBySession(sessionId: SessionId): AppResult<List<AuditRecord>>
 }
 
 interface AuditReader {
-    fun readBySession(sessionId: SessionId): Result<List<AuditRecord>>
+    fun readBySession(sessionId: SessionId): AppResult<List<AuditRecord>>
 }

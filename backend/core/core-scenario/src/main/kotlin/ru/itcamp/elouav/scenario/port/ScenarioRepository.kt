@@ -5,8 +5,8 @@ import ru.itcamp.elouav.shared.ScenarioId
 import ru.itcamp.elouav.scenario.model.Scenario
 
 interface ScenarioRepository {
-    fun load(scenarioId: ScenarioId): Result<Scenario>
-    fun save(scenario: Scenario): Result<Unit>
-    fun list(): Result<List<Scenario>>
-    fun delete(scenarioId: ScenarioId): Result<Unit>
+    fun load(scenarioId: ScenarioId): AppResult<Scenario>
+    fun save(scenario: Scenario): AppResult<Unit>
+    fun list(): AppResult<List<Scenario>>
+    fun delete(scenarioId: ScenarioId): AppResult<Unit>
 }

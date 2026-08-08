@@ -6,6 +6,16 @@ plugins {
 }
 
 dependencies {
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:3.4.1"))
+
+    // Core layer
+    implementation(project(":core:core-shared"))
+    implementation(project(":core:core-sim"))
+    implementation(project(":core:core-scenario"))
+    implementation(project(":core:core-audit"))
+    implementation(project(":core:core-scoring"))
+    implementation(project(":core:core-ai"))
+
     // Application layer
     implementation(project(":application:app-sim"))
     implementation(project(":application:app-scenario"))
@@ -23,9 +33,9 @@ dependencies {
     implementation(project(":infrastructure:infra-monitoring"))
 
     // Spring Boot
-    implementation("org.springframework.boot:spring-boot-starter")
-    implementation("org.flywaydb:flyway-core")
-    implementation("org.flywaydb:flyway-database-postgresql")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")

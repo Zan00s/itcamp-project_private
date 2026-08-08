@@ -5,8 +5,10 @@ plugins {
 }
 
 dependencies {
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:3.4.1"))
     implementation(project(":core:core-shared"))
     implementation(project(":core:core-ai"))
+    implementation("org.springframework.boot:spring-boot-starter")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

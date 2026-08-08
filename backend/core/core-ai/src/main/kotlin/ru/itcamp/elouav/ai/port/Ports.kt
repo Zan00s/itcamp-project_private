@@ -9,7 +9,7 @@ import ru.itcamp.elouav.sim.model.NodeState
 import ru.itcamp.elouav.shared.NodeId
 
 interface LLMJudge {
-    suspend fun judge(request: JudgeRequest): Result<AIVerdict>
+    suspend fun judge(request: JudgeRequest): AppResult<AIVerdict>
 }
 
 interface RiskPredictor {
@@ -18,7 +18,7 @@ interface RiskPredictor {
         currentPhase: String,
         states: Map<NodeId, NodeState>,
         availableActions: List<AvailableAction>,
-    ): Result<RiskForecast>
+    ): AppResult<RiskForecast>
 }
 
 data class AvailableAction(
@@ -32,7 +32,7 @@ interface AdaptiveGenerator {
         errors: List<ErrorSummary>,
         scenarioId: String,
         sessionId: String,
-    ): Result<AdaptiveScenario>
+    ): AppResult<AdaptiveScenario>
 }
 
 data class ErrorSummary(

@@ -5,9 +5,11 @@ plugins {
 }
 
 dependencies {
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:3.4.1"))
     implementation(project(":core:core-shared"))
     implementation(project(":core:core-sim"))
     implementation(project(":core:core-scenario"))
+    implementation(project(":core:core-audit"))
     implementation("org.springframework.boot:spring-boot-starter-data-jdbc")
     implementation("org.postgresql:postgresql")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
