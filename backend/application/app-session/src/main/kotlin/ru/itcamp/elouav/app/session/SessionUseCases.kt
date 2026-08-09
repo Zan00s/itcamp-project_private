@@ -5,6 +5,7 @@ import ru.itcamp.elouav.shared.NodeId
 import ru.itcamp.elouav.shared.ScenarioId
 import ru.itcamp.elouav.shared.SessionId
 import ru.itcamp.elouav.shared.UserId
+import ru.itcamp.elouav.scoring.model.Verdict
 import ru.itcamp.elouav.sim.model.Graph
 import ru.itcamp.elouav.sim.model.NodeState
 import java.time.Instant
@@ -19,6 +20,7 @@ data class Session(
     val startedAt: Instant,
     var endedAt: Instant? = null,
     var active: Boolean = true,
+    var verdict: Verdict? = null,
 )
 
 class SessionStore {
@@ -48,6 +50,14 @@ class SessionStore {
             sessions[id] = it.copy(active = false, endedAt = Clock.now())
         }
     }
+
+    fun setVerdict(id: SessionId, verdict: Verdict) {
+        sessions[id]?.let {
+            sessions[id] = it.copy(verdict = verdict)
+        }
+    }
+
+    fun all(): List<Session> = sessions.values.toList()
 
     fun activeByUser(userId: UserId): List<Session> =
         sessions.values.filter { it.userId == userId && it.active }

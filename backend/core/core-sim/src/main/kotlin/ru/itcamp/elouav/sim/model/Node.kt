@@ -73,6 +73,7 @@ data class Node(
     val state: NodeState = NodeState(),
     val actions: List<Action> = emptyList(),
     val behavior: List<BehaviorRule> = emptyList(),
+    val paramLabels: Map<String, String> = emptyMap(),
 ) {
     fun action(id: String): Action? = actions.find { it.id == id }
 }

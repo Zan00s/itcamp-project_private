@@ -1,6 +1,24 @@
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import type { VerdictDTO } from '../api/client';
 
+const COMPONENT_LABELS: Record<string, string> = {
+  correctness: 'Правильность',
+  sequence: 'Последовательность',
+  efficiency: 'Эффективность',
+  safety: 'Безопасность',
+  timing: 'Тайминг',
+  semantics: 'Семантика (ИИ)',
+  reasoning: 'Рассуждения (ИИ)',
+};
+
+const FEEDBACK_LABELS: Record<string, string> = {
+  SEQUENCE_ERROR: 'Ошибка последовательности',
+  OUT_OF_RANGE: 'Выход за пределы',
+  SAFETY_VIOLATION: 'Нарушение безопасности',
+  TIMING: 'Тайминг',
+  SEMANTIC: 'Семантическая ошибка',
+};
+
 export default function ResultsScreen() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
@@ -53,7 +71,7 @@ export default function ResultsScreen() {
           {Object.entries(verdict.componentScores).map(([comp, score]) => (
             <div key={comp} style={{ marginBottom: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                <span style={{ textTransform: 'capitalize' }}>{comp}</span>
+                <span>{COMPONENT_LABELS[comp] || comp}</span>
                 <span>{(score * 100).toFixed(0)}%</span>
               </div>
               <div style={{ background: '#0f0f1e', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
@@ -99,7 +117,7 @@ export default function ResultsScreen() {
                 }`,
               }}>
                 <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '2px' }}>
-                  {fb.type.replace(/_/g, ' ')}
+                  {FEEDBACK_LABELS[fb.type] || fb.type.replace(/_/g, ' ')}
                 </div>
                 <div>{fb.text}</div>
                 {fb.hint && <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: '4px' }}>💡 {fb.hint}</div>}

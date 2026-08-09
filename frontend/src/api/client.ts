@@ -1,26 +1,25 @@
 import axios from 'axios';
+import { getUserManager } from '../auth/oidc';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
 });
 
-api.interceptors.request.use((config) => {
-  const userJson = localStorage.getItem('oidc.user');
-  if (userJson) {
-    try {
-      const user = JSON.parse(userJson);
-      if (user.access_token) {
-        config.headers['Authorization'] = `Bearer ${user.access_token}`;
-      }
-    } catch {
-      // ignore
+api.interceptors.request.use(async (config) => {
+  try {
+    const user = await getUserManager().getUser();
+    if (user?.access_token) {
+      config.headers['Authorization'] = `Bearer ${user.access_token}`;
     }
+    if (user?.profile?.preferred_username) {
+      config.headers['X-User-Id'] = user.profile.preferred_username;
+    }
+  } catch {
+    // ignore
   }
-  const userId = localStorage.getItem('userId') || 'student';
-  config.headers['X-User-Id'] = userId;
   return config;
 });
 
@@ -30,6 +29,7 @@ export interface NodeDTO {
   name: string;
   mode: string;
   parameters: Record<string, number>;
+  paramLabels: Record<string, string>;
   actions: ActionDTO[];
   inputs: string[];
   outputs: string[];
@@ -133,6 +133,17 @@ export interface VerdictDTO {
   aiUsed: boolean;
 }
 
+export interface SessionInfoDTO {
+  id: string;
+  scenarioId: string;
+  userId: string;
+  attempt: number;
+  active: boolean;
+  startedAt: string;
+  endedAt: string | null;
+  verdict: VerdictDTO | null;
+}
+
 export const apiClient = {
   async getGraph(install = 'ELOU-AV'): Promise<GraphDTO> {
     const { data } = await api.get('/graph', { params: { install } });
@@ -176,6 +187,11 @@ export const apiClient = {
 
   async getSessionState(sessionId: string): Promise<GraphDTO> {
     const { data } = await api.get(`/sessions/${sessionId}/state`);
+    return data;
+  },
+
+  async listAllSessions(): Promise<SessionInfoDTO[]> {
+    const { data } = await api.get('/sessions');
     return data;
   },
 };

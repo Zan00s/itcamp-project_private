@@ -207,7 +207,40 @@ class ApiController(
             profile = ScoringProfile(),
         )
 
+        sessionStore.setVerdict(SessionId(id), verdict)
+
         return ResponseEntity.ok(DTOMapper.toVerdictDTO(verdict))
+    }
+
+    @GetMapping("/sessions")
+    fun listSessions(): ResponseEntity<List<SessionInfoDTO>> {
+        val sessions = sessionStore.all().sortedByDescending { it.startedAt }
+        return ResponseEntity.ok(sessions.map { s ->
+            SessionInfoDTO(
+                id = s.id.value,
+                scenarioId = s.scenarioId.value,
+                userId = s.userId.value,
+                attempt = s.attempt,
+                active = s.active,
+                startedAt = s.startedAt.toString(),
+                endedAt = s.endedAt?.toString(),
+                verdict = s.verdict?.let { v ->
+                    VerdictDTO(
+                        sessionId = v.sessionId,
+                        scenarioId = v.scenarioId,
+                        attempt = v.attempt,
+                        verdict = v.verdict.name,
+                        score = v.score.total,
+                        componentScores = v.score.componentScores,
+                        achievements = v.achievements,
+                        feedback = v.feedback.map { f ->
+                            FeedbackDTO(f.actionId, f.type.name, f.text, f.hint)
+                        },
+                        aiUsed = v.aiUsed,
+                    )
+                },
+            )
+        })
     }
 
     @GetMapping("/sessions/{id}/state")

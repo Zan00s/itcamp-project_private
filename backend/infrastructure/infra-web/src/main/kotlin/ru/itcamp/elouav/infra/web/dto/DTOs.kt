@@ -15,6 +15,7 @@ data class NodeDTO(
     val name: String,
     val mode: String,
     val parameters: Map<String, Double>,
+    val paramLabels: Map<String, String>,
     val actions: List<ActionDTO>,
     val inputs: List<String>,
     val outputs: List<String>,
@@ -122,6 +123,17 @@ data class FeedbackDTO(
     val hint: String?,
 )
 
+data class SessionInfoDTO(
+    val id: String,
+    val scenarioId: String,
+    val userId: String,
+    val attempt: Int,
+    val active: Boolean,
+    val startedAt: String,
+    val endedAt: String?,
+    val verdict: VerdictDTO?,
+)
+
 object DTOMapper {
     fun toGraphDTO(graph: Graph): GraphDTO = GraphDTO(
         nodes = graph.nodes.values.map { toNodeDTO(it) },
@@ -134,6 +146,7 @@ object DTOMapper {
         name = node.name,
         mode = node.state.mode.name,
         parameters = node.state.parameters,
+        paramLabels = node.paramLabels,
         actions = node.actions.map { toActionDTO(it) },
         inputs = node.inputs.map { it.value },
         outputs = node.outputs.map { it.value },

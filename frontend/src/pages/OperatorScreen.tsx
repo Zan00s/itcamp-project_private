@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSimStore } from '../store/simStore';
-import { apiClient, type VerdictDTO } from '../api/client';
+import { apiClient, type VerdictDTO, type NodeDTO } from '../api/client';
 
 const MODE_COLORS: Record<string, string> = {
   STOPPED: '#555',
@@ -10,13 +10,101 @@ const MODE_COLORS: Record<string, string> = {
   MAINTENANCE: '#ff9800',
 };
 
-const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
-  feed_pump: { x: 50, y: 200 },
-  preheater: { x: 300, y: 200 },
-  furnace: { x: 550, y: 100 },
-  dehydrator: { x: 800, y: 200 },
-  output: { x: 1050, y: 200 },
+const MODE_LABELS: Record<string, string> = {
+  STOPPED: 'Остановлен',
+  RUNNING: 'Работает',
+  ALARM: 'Авария',
+  MAINTENANCE: 'Обслуживание',
 };
+
+const TYPE_LABELS: Record<string, string> = {
+  feed_pump: 'Насос',
+  preheater: 'Теплообменник',
+  furnace: 'Печь',
+  electrodehydrator: 'Дегидратор',
+  output: 'Выход',
+};
+
+const RESULT_LABELS: Record<string, string> = {
+  Applied: 'Применено',
+  Clamped: 'Ограничено',
+  Rejected: 'Отклонено',
+  Alarm: 'Авария',
+};
+
+const NODE_W = 130;
+const NODE_H = 90;
+
+const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
+  feed_pump: { x: 20, y: 120 },
+  preheater: { x: 200, y: 120 },
+  furnace: { x: 380, y: 40 },
+  dehydrator: { x: 560, y: 120 },
+  output: { x: 740, y: 120 },
+};
+
+function NodeIcon({ type, x, y }: { type: string; x: number; y: number }) {
+  const cx = x + NODE_W / 2;
+  const cy = y + 18;
+
+  if (type === 'feed_pump') {
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r="10" fill="none" stroke="#0f3460" strokeWidth="2" />
+        <path d={`M${cx - 7},${cy + 2} L${cx},${cy - 7} L${cx + 7},${cy + 2} Z`} fill="#0f3460" />
+      </g>
+    );
+  }
+  if (type === 'preheater') {
+    return (
+      <g stroke="#0f3460" strokeWidth="1.5" fill="none">
+        <rect x={x + 45} y={y + 8} width="40" height="20" rx="3" />
+        <line x1={x + 50} y1={y + 12} x2={x + 50} y2={y + 24} />
+        <line x1={x + 58} y1={y + 12} x2={x + 58} y2={y + 24} />
+        <line x1={x + 66} y1={y + 12} x2={x + 66} y2={y + 24} />
+        <line x1={x + 74} y1={y + 12} x2={x + 74} y2={y + 24} />
+        <line x1={x + 82} y1={y + 12} x2={x + 82} y2={y + 24} />
+      </g>
+    );
+  }
+  if (type === 'furnace') {
+    return (
+      <g fill="none" stroke="#0f3460" strokeWidth="1.5">
+        <rect x={x + 48} y={y + 8} width="34" height="20" rx="2" />
+        <path d={`M${x + 52},${y + 26} Q${x + 55},${y + 18} ${x + 58},${y + 26} Q${x + 61},${y + 18} ${x + 64},${y + 26} Q${x + 67},${y + 18} ${x + 70},${y + 26} Q${x + 73},${y + 18} ${x + 76},${y + 26}`} />
+      </g>
+    );
+  }
+  if (type === 'electrodehydrator') {
+    return (
+      <g fill="none" stroke="#0f3460" strokeWidth="1.5">
+        <rect x={x + 48} y={y + 6} width="34" height="24" rx="4" />
+        <line x1={x + 52} y1={y + 14} x2={x + 78} y2={y + 14} stroke="#e94560" strokeWidth="1" />
+        <line x1={x + 52} y1={y + 22} x2={x + 78} y2={y + 22} stroke="#e94560" strokeWidth="1" />
+      </g>
+    );
+  }
+  return (
+    <g fill="none" stroke="#0f3460" strokeWidth="1.5">
+      <rect x={x + 52} y={y + 10} width="26" height="16" rx="3" />
+      <path d={`M${x + 65},${y + 26} L${x + 65},${y + 32}`} />
+    </g>
+  );
+}
+
+function paramShortLabel(_node: NodeDTO, key: string): string {
+  const labels: Record<string, string> = {
+    power_percent: 'Мощн',
+    flow_rate: 'Расход',
+    pressure_out: 'Давл',
+    temperature: 'Темп',
+    inlet_flow: 'Вх.расход',
+    inlet_temp: 'Вх.темп',
+    water_content: 'Вода',
+    salt_mg_l: 'Соли',
+  };
+  return labels[key] || key;
+}
 
 export default function OperatorScreen() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -75,6 +163,7 @@ export default function OperatorScreen() {
   }
 
   const selectedNodeData = graph?.nodes.find((n) => n.id === selectedNode);
+  const svgWidth = 900;
 
   return (
     <div style={{ minHeight: '100vh', background: '#1a1a2e', color: '#eee', display: 'flex', flexDirection: 'column' }}>
@@ -96,62 +185,81 @@ export default function OperatorScreen() {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* P&ID Diagram */}
         <div style={{ flex: 2, padding: '1rem', overflow: 'auto', position: 'relative' }}>
-          <svg width="1150" height="400" style={{ background: '#0f0f1e', borderRadius: '8px' }}>
-            {/* Edges */}
-            {graph?.edges.map((edge) => {
-              const from = NODE_POSITIONS[edge.from] || { x: 0, y: 0 };
-              const to = NODE_POSITIONS[edge.to] || { x: 0, y: 0 };
-              return (
-                <line
-                  key={edge.id}
-                  x1={from.x + 120}
-                  y1={from.y + 40}
-                  x2={to.x}
-                  y2={to.y + 40}
-                  stroke="#555"
-                  strokeWidth="2"
-                  markerEnd="url(#arrow)"
-                />
-              );
-            })}
-            <defs>
-              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L9,3 z" fill="#555" />
-              </marker>
-            </defs>
-            {/* Nodes */}
-            {graph?.nodes.map((node) => {
-              const pos = NODE_POSITIONS[node.id] || { x: 0, y: 0 };
-              const color = MODE_COLORS[node.mode] || '#555';
-              return (
-                <g key={node.id} onClick={() => setSelectedNode(node.id)} style={{ cursor: 'pointer' }}>
-                  <rect
-                    x={pos.x}
-                    y={pos.y}
-                    width="120"
-                    height="80"
-                    rx="8"
-                    fill="#16213e"
-                    stroke={selectedNode === node.id ? '#e94560' : color}
+          {currentScenario && (
+            <div style={{ marginBottom: '0.5rem', padding: '8px 12px', background: '#0f3460', borderRadius: '8px', border: '1px solid #e94560' }}>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ color: '#e94560', fontWeight: 'bold' }}>Фазы:</span>
+                {currentScenario.phases.map((ph, i) => (
+                  <span key={ph.id} style={{ color: '#aaa', fontSize: '0.85rem' }}>
+                    {i + 1}. {ph.title}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ overflowX: 'auto', paddingBottom: '8px' }}>
+            <svg width={svgWidth} height="240" style={{ background: '#0f0f1e', borderRadius: '8px', minWidth: svgWidth }}>
+              {/* Edges */}
+              {graph?.edges.map((edge) => {
+                const from = NODE_POSITIONS[edge.from] || { x: 0, y: 0 };
+                const to = NODE_POSITIONS[edge.to] || { x: 0, y: 0 };
+                const x1 = from.x + NODE_W;
+                const y1 = from.y + NODE_H / 2;
+                const x2 = to.x;
+                const y2 = to.y + NODE_H / 2;
+                const midX = (x1 + x2) / 2;
+                return (
+                  <path
+                    key={edge.id}
+                    d={`M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`}
+                    stroke="#555"
                     strokeWidth="2"
+                    fill="none"
+                    markerEnd="url(#arrow)"
                   />
-                  <circle cx={pos.x + 12} cy={pos.y + 12} r="5" fill={color} />
-                  <text x={pos.x + 60} y={pos.y + 30} textAnchor="middle" fill="#eee" fontSize="11" fontWeight="bold">
-                    {node.name.length > 16 ? node.name.substring(0, 14) + '...' : node.name}
-                  </text>
-                  <text x={pos.x + 60} y={pos.y + 48} textAnchor="middle" fill="#aaa" fontSize="9">
-                    {node.mode}
-                  </text>
-                  <text x={pos.x + 60} y={pos.y + 62} textAnchor="middle" fill="#aaa" fontSize="8">
-                    {Object.entries(node.parameters)
-                      .slice(0, 2)
-                      .map(([k, v]) => `${k.split('_')[0]}:${v.toFixed(0)}`)
-                      .join(' ')}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
+                );
+              })}
+              <defs>
+                <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#555" />
+                </marker>
+              </defs>
+              {/* Nodes */}
+              {graph?.nodes.map((node) => {
+                const pos = NODE_POSITIONS[node.id] || { x: 0, y: 0 };
+                const color = MODE_COLORS[node.mode] || '#555';
+                const isSelected = selectedNode === node.id;
+                return (
+                  <g key={node.id} onClick={() => setSelectedNode(node.id)} style={{ cursor: 'pointer' }}>
+                    <rect
+                      x={pos.x}
+                      y={pos.y}
+                      width={NODE_W}
+                      height={NODE_H}
+                      rx="8"
+                      fill="#16213e"
+                      stroke={isSelected ? '#e94560' : color}
+                      strokeWidth="2"
+                    />
+                    <NodeIcon type={node.type} x={pos.x} y={pos.y} />
+                    <text x={pos.x + NODE_W / 2} y={pos.y + 44} textAnchor="middle" fill="#eee" fontSize="10" fontWeight="bold">
+                      {node.name.length > 18 ? node.name.substring(0, 16) + '…' : node.name}
+                    </text>
+                    <text x={pos.x + NODE_W / 2} y={pos.y + 58} textAnchor="middle" fill={color} fontSize="9">
+                      {MODE_LABELS[node.mode] || node.mode}
+                    </text>
+                    <text x={pos.x + NODE_W / 2} y={pos.y + 72} textAnchor="middle" fill="#888" fontSize="8">
+                      {Object.entries(node.parameters)
+                        .slice(0, 2)
+                        .map(([k, v]) => `${paramShortLabel(node, k)}:${v.toFixed(0)}`)
+                        .join('  ')}
+                    </text>
+                    <circle cx={pos.x + 10} cy={pos.y + 10} r="4" fill={color} />
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
         </div>
 
         {/* Actions Panel */}
@@ -163,13 +271,13 @@ export default function OperatorScreen() {
               <div style={{ marginBottom: '1rem' }}>
                 <strong>{selectedNodeData.name}</strong>
                 <div style={{ fontSize: '0.85rem', color: '#aaa' }}>
-                  Тип: {selectedNodeData.type} | Режим: {selectedNodeData.mode}
+                  Тип: {TYPE_LABELS[selectedNodeData.type] || selectedNodeData.type} | Режим: {MODE_LABELS[selectedNodeData.mode] || selectedNodeData.mode}
                 </div>
               </div>
               <div style={{ marginBottom: '0.75rem', padding: '8px', background: '#0f0f1e', borderRadius: '6px' }}>
                 {Object.entries(selectedNodeData.parameters).map(([k, v]) => (
                   <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                    <span style={{ color: '#888' }}>{k}:</span>
+                    <span style={{ color: '#888' }}>{selectedNodeData.paramLabels?.[k] || k}:</span>
                     <span>{v.toFixed(2)}</span>
                   </div>
                 ))}
@@ -235,7 +343,7 @@ export default function OperatorScreen() {
                   {entry.value !== null && ` = ${entry.value.toFixed(1)}`}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: '#aaa' }}>
-                  Результат: {entry.result}
+                  Результат: {RESULT_LABELS[entry.result] || entry.result}
                 </div>
                 {entry.chain.length > 0 && (
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>

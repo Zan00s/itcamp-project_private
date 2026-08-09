@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import { login } from '../auth/oidc';
+import { login, getUser } from '../auth/oidc';
 
 export default function LoginScreen() {
   useEffect(() => {
-    import('../auth/oidc').then(m => m.getUser()).then((u) => {
+    getUser().then((u) => {
       if (u && !u.expired) window.location.href = '/';
     });
   }, []);

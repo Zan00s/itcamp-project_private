@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import { userManager } from '../auth/oidc';
+import { getUserManager } from '../auth/oidc';
 
 export default function CallbackPage() {
   useEffect(() => {
-    userManager.signinRedirectCallback()
+    getUserManager().signinRedirectCallback()
       .then(() => { window.location.href = '/'; })
       .catch(() => { window.location.href = '/login'; });
   }, []);

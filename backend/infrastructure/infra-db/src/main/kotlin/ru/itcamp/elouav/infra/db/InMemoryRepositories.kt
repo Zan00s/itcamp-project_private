@@ -69,7 +69,7 @@ class InMemoryGraphRepository(
                     ),
                 ),
                 actions = listOf(
-                    Action("set_power", "Установить мощность", "power_percent", 0.0..100.0),
+                    Action("set_power", "Установить мощность, %", "power_percent", 0.0..100.0),
                     Action("start", "Пуск"),
                     Action("stop", "Остановка"),
                 ),
@@ -78,6 +78,11 @@ class InMemoryGraphRepository(
                         deps = listOf("power_percent")),
                     BehaviorRule("b_pressure", "pressure_out", "8.0 + flow_rate * 0.02",
                         deps = listOf("flow_rate")),
+                ),
+                paramLabels = mapOf(
+                    "power_percent" to "Мощность, %",
+                    "flow_rate" to "Расход, м³/ч",
+                    "pressure_out" to "Давление, бар",
                 ),
             )
 
@@ -98,6 +103,10 @@ class InMemoryGraphRepository(
                         deps = listOf("inlet_flow"),
                         constraints = Constraint(max = 180.0, onViolate = ViolateAction.ALARM)),
                 ),
+                paramLabels = mapOf(
+                    "inlet_flow" to "Входной расход, м³/ч",
+                    "temperature" to "Температура, °C",
+                ),
             )
 
             val furnace = Node(
@@ -111,7 +120,7 @@ class InMemoryGraphRepository(
                     parameters = mapOf("temperature" to 20.0, "inlet_flow" to 0.0),
                 ),
                 actions = listOf(
-                    Action("set_temp", "Установить температуру", "temperature", 20.0..400.0),
+                    Action("set_temp", "Установить температуру, °C", "temperature", 20.0..400.0),
                     Action("start", "Пуск"),
                     Action("stop", "Остановка"),
                 ),
@@ -121,6 +130,10 @@ class InMemoryGraphRepository(
                     BehaviorRule("b_temp", "temperature", "300.0 + inlet_flow * 0.5",
                         deps = listOf("inlet_flow"),
                         constraints = Constraint(max = 400.0, onViolate = ViolateAction.ALARM)),
+                ),
+                paramLabels = mapOf(
+                    "temperature" to "Температура, °C",
+                    "inlet_flow" to "Входной расход, м³/ч",
                 ),
             )
 
@@ -139,6 +152,10 @@ class InMemoryGraphRepository(
                         "salt_mg_l" to 50.0,
                     ),
                 ),
+                actions = listOf(
+                    Action("start", "Пуск"),
+                    Action("stop", "Остановка"),
+                ),
                 behavior = listOf(
                     BehaviorRule("b_iflow", "inlet_flow", "input.flow-in"),
                     BehaviorRule("b_itemp", "inlet_temp", "input.temp-in"),
@@ -146,6 +163,12 @@ class InMemoryGraphRepository(
                         constraints = Constraint(min = 0.0, onViolate = ViolateAction.CLAMP)),
                     BehaviorRule("b_salt", "salt_mg_l", "50.0 - inlet_temp * 0.1",
                         constraints = Constraint(min = 0.0, onViolate = ViolateAction.CLAMP)),
+                ),
+                paramLabels = mapOf(
+                    "inlet_flow" to "Входной расход, м³/ч",
+                    "inlet_temp" to "Входная температура, °C",
+                    "water_content" to "Содержание воды, %",
+                    "salt_mg_l" to "Содержание солей, мг/л",
                 ),
             )
 
@@ -162,6 +185,11 @@ class InMemoryGraphRepository(
                     BehaviorRule("b_flow", "flow_rate", "input.flow-in"),
                     BehaviorRule("b_water", "water_content", "input.quality-in"),
                     BehaviorRule("b_salt", "salt_mg_l", "input.quality-in"),
+                ),
+                paramLabels = mapOf(
+                    "flow_rate" to "Расход, м³/ч",
+                    "water_content" to "Содержание воды, %",
+                    "salt_mg_l" to "Содержание солей, мг/л",
                 ),
             )
 
