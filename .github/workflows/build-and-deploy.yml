@@ -71,9 +71,9 @@ jobs:
           tags: ${{ steps.frontend-meta.outputs.tags }}
           labels: ${{ steps.frontend-meta.outputs.labels }}
           build-args: |
-            VITE_API_BASE=${{ vars.VITE_API_BASE || '/api' }}
-            VITE_KEYCLOAK_URL=${{ vars.VITE_KEYCLOAK_URL || 'http://localhost:8180/realms/elouav' }}
-            VITE_REDIRECT_URI=${{ vars.VITE_REDIRECT_URI || 'http://localhost:3000/callback' }}
+            VITE_API_BASE=${{ vars.VITE_API_BASE }}
+            VITE_KEYCLOAK_URL=${{ vars.VITE_KEYCLOAK_URL }}
+            VITE_REDIRECT_URI=${{ vars.VITE_REDIRECT_URI }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
@@ -101,10 +101,56 @@ jobs:
         env:
           IMAGE_NAMESPACE: ghcr.io/${{ github.repository }}
           IMAGE_TAG: sha-${{ github.sha }}
+          SPRING_PROFILES_ACTIVE: ${{ vars.SPRING_PROFILES_ACTIVE }}
+          DB_HOST: ${{ vars.DB_HOST }}
+          DB_PORT: ${{ vars.DB_PORT }}
+          DB_NAME: ${{ vars.DB_NAME }}
+          DB_USER: ${{ vars.DB_USER }}
+          REDIS_HOST: ${{ vars.REDIS_HOST }}
+          REDIS_PORT: ${{ vars.REDIS_PORT }}
+          KC_HOSTNAME: ${{ vars.KC_HOSTNAME }}
+          KC_HOSTNAME_ADMIN: ${{ vars.KC_HOSTNAME_ADMIN }}
+          KC_HTTP_PORT: ${{ vars.KC_HTTP_PORT }}
+          KC_HTTP_ENABLED: ${{ vars.KC_HTTP_ENABLED }}
+          KC_REALM: ${{ vars.KC_REALM }}
+          KC_DB_URL_HOST: ${{ vars.KC_DB_URL_HOST }}
+          KC_DB_URL_PORT: ${{ vars.KC_DB_URL_PORT }}
+          KC_DB_URL_DATABASE: ${{ vars.KC_DB_URL_DATABASE }}
+          KC_DB_USERNAME: ${{ vars.KC_DB_USERNAME }}
+          KC_HEALTH_ENABLED: ${{ vars.KC_HEALTH_ENABLED }}
+          KC_METRICS_ENABLED: ${{ vars.KC_METRICS_ENABLED }}
+          KC_HOSTNAME_STRICT: ${{ vars.KC_HOSTNAME_STRICT }}
+          KC_PROXY_HEADERS: ${{ vars.KC_PROXY_HEADERS }}
+          KEYCLOAK_URL: ${{ vars.KEYCLOAK_URL }}
+          LLM_ENDPOINT: ${{ vars.LLM_ENDPOINT }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          JAVA_OPTS: ${{ vars.JAVA_OPTS }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          KC_BOOTSTRAP_ADMIN_USERNAME: ${{ vars.KC_BOOTSTRAP_ADMIN_USERNAME }}
+          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+          VITE_KEYCLOAK_URL: ${{ vars.VITE_KEYCLOAK_URL }}
+          VITE_REDIRECT_URI: ${{ vars.VITE_REDIRECT_URI }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          KC_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+          KC_DB_PASSWORD: ${{ secrets.KC_DB_PASSWORD }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
           IMAGE_NAMESPACE="$(printf '%s' "$IMAGE_NAMESPACE" | tr '[:upper:]' '[:lower:]')"
           export BACKEND_IMAGE="${IMAGE_NAMESPACE}/backend:${IMAGE_TAG}"
           export FRONTEND_IMAGE="${IMAGE_NAMESPACE}/frontend:${IMAGE_TAG}"
+          umask 077
+          : > .env
+          for variable in \
+            SPRING_PROFILES_ACTIVE DB_HOST DB_PORT DB_NAME DB_USER DB_PASS \
+            REDIS_HOST REDIS_PORT KC_HOSTNAME KC_HOSTNAME_ADMIN KC_HTTP_PORT \
+            KC_HTTP_ENABLED KC_REALM KC_DB_URL_HOST KC_DB_URL_PORT KC_DB_URL_DATABASE \
+            KC_DB_USERNAME KC_DB_PASSWORD KC_HEALTH_ENABLED KC_METRICS_ENABLED \
+            KC_HOSTNAME_STRICT KC_PROXY_HEADERS KC_BOOTSTRAP_ADMIN_USERNAME \
+            KC_BOOTSTRAP_ADMIN_PASSWORD KEYCLOAK_URL LLM_ENDPOINT LLM_API_KEY \
+            LLM_MODEL JAVA_OPTS LOG_LEVEL VITE_API_BASE VITE_KEYCLOAK_URL \
+            VITE_REDIRECT_URI; do
+            printf '%s=%s\n' "$variable" "${!variable}" >> .env
+          done
           docker compose pull backend frontend
           docker compose up -d --remove-orphans
           docker compose ps

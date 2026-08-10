@@ -39,23 +39,21 @@ services:
     command: ["start-dev", "--import-realm", "--http-port=${KC_HTTP_PORT:-8180}", "--health-enabled=true"]
     environment:
       KC_HTTP_RELATIVE_PATH: /
-      KC_BOOTSTRAP_ADMIN_USERNAME: super-kc-admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: VXNtjTEnFk@PF9zYw5UDY8EZ
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
       KC_HTTP_ENABLED: ${KC_HTTP_ENABLED:-true}
-#
-      KC_HOSTNAME: https://auth.it-camp-2026.ru
-      KC_HOSTNAME_ADMIN: https://auth.it-camp-2026.ru
-#
+      KC_HOSTNAME: ${KC_HOSTNAME:-https://auth.it-camp-2026.ru}
+      KC_HOSTNAME_ADMIN: ${KC_HOSTNAME_ADMIN:-https://auth.it-camp-2026.ru}
       KC_DB: postgres
-      KC_DB_URL_HOST: postgres
-      KC_DB_URL_PORT: 5432
-      KC_DB_URL_DATABASE: keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: mYFNQ5#FrPQcvWKQWbUxdbrT
-      KC_HEALTH_ENABLED: true
-      KC_METRICS_ENABLED: true
-      KC_HOSTNAME_STRICT: false
-      KC_PROXY_HEADERS: xforwarded
+      KC_DB_URL_HOST: ${KC_DB_URL_HOST:-postgres}
+      KC_DB_URL_PORT: ${KC_DB_URL_PORT:-5432}
+      KC_DB_URL_DATABASE: ${KC_DB_URL_DATABASE:-keycloak}
+      KC_DB_USERNAME: ${KC_DB_USERNAME:-keycloak}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak_dev}
+      KC_HEALTH_ENABLED: ${KC_HEALTH_ENABLED:-true}
+      KC_METRICS_ENABLED: ${KC_METRICS_ENABLED:-true}
+      KC_HOSTNAME_STRICT: ${KC_HOSTNAME_STRICT:-false}
+      KC_PROXY_HEADERS: ${KC_PROXY_HEADERS:-xforwarded}
     # ports:
     #   - "${PORT_KEYCLOAK:-8180}:${KC_HTTP_PORT:-8180}"
     volumes:
@@ -86,7 +84,7 @@ services:
       DB_PASS: ${DB_PASS:-elouav_dev}
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: ${REDIS_PORT:-6379}
-      KEYCLOAK_URL: https://auth.it-camp-2026.ru
+      KEYCLOAK_URL: ${KEYCLOAK_URL:-https://auth.it-camp-2026.ru}
       LLM_ENDPOINT: ${LLM_ENDPOINT:-http://localhost:11434}
       LLM_API_KEY: ${LLM_API_KEY:-test-key}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
@@ -111,9 +109,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE: https://api.it-camp-2026.ru/api
+        VITE_API_BASE: ${VITE_API_BASE:-https://api.it-camp-2026.ru/api}
         VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-https://auth.it-camp-2026.ru/realms/elouav}
-        VITE_REDIRECT_URI: ${VITE_REDIRECT_URI:-https://auth.it-camp-2026.ru/callback}
+        VITE_REDIRECT_URI: ${VITE_REDIRECT_URI:-https://it-camp-2026.ru/callback}
     container_name: elouav-frontend
     # ports:
     #   - "${PORT_FRONTEND:-3000}:80"
