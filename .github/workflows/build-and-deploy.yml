@@ -154,4 +154,3 @@ jobs:
           docker compose pull backend frontend
           docker compose up -d --remove-orphans
           docker compose ps
-
