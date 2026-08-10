@@ -23,8 +23,19 @@ data class Session(
     var verdict: Verdict? = null,
 )
 
-class SessionStore {
+interface SessionPersistence {
+    fun save(session: Session)
+    fun loadAll(): List<Session>
+}
+
+class SessionStore(
+    private val persistence: SessionPersistence? = null,
+) {
     private val sessions = ConcurrentHashMap<SessionId, Session>()
+
+    init {
+        persistence?.loadAll()?.forEach { sessions[it.id] = it }
+    }
 
     fun create(scenarioId: ScenarioId, userId: UserId, graph: Graph, attempt: Int = 1): Session {
         val session = Session(
@@ -36,24 +47,33 @@ class SessionStore {
             startedAt = Clock.now(),
         )
         sessions[session.id] = session
+        persistence?.save(session)
         return session
     }
 
     fun get(id: SessionId): Session? = sessions[id]
 
     fun update(id: SessionId, graph: Graph) {
-        sessions[id]?.let { sessions[id] = it.copy(graph = graph) }
+        sessions[id]?.let {
+            val updated = it.copy(graph = graph)
+            sessions[id] = updated
+            persistence?.save(updated)
+        }
     }
 
     fun end(id: SessionId) {
         sessions[id]?.let {
-            sessions[id] = it.copy(active = false, endedAt = Clock.now())
+            val updated = it.copy(active = false, endedAt = Clock.now())
+            sessions[id] = updated
+            persistence?.save(updated)
         }
     }
 
     fun setVerdict(id: SessionId, verdict: Verdict) {
         sessions[id]?.let {
-            sessions[id] = it.copy(verdict = verdict)
+            val updated = it.copy(verdict = verdict)
+            sessions[id] = updated
+            persistence?.save(updated)
         }
     }
 
@@ -64,7 +84,7 @@ class SessionStore {
 }
 
 class StartSessionUseCase(
-    private val store: SessionStore = SessionStore(),
+    private val store: SessionStore = SessionStore(null),
 ) {
     fun execute(
         scenarioId: ScenarioId,
@@ -75,7 +95,7 @@ class StartSessionUseCase(
 }
 
 class EndSessionUseCase(
-    private val store: SessionStore = SessionStore(),
+    private val store: SessionStore = SessionStore(null),
 ) {
     fun execute(sessionId: SessionId) {
         store.end(sessionId)

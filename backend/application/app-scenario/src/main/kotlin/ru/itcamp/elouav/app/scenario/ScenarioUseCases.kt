@@ -24,3 +24,23 @@ class ListScenariosUseCase(
 ) {
     fun execute(): AppResult<List<Scenario>> = repo.list()
 }
+
+class SaveScenarioUseCase(
+    private val repo: ScenarioRepository,
+) {
+    fun execute(scenario: Scenario): AppResult<Unit> {
+        if (scenario.name.isBlank()) {
+            return AppResult.Err("Имя сценария не может быть пустым")
+        }
+        if (scenario.phases.isEmpty()) {
+            return AppResult.Err("Сценарий должен содержать хотя бы одну фазу")
+        }
+        return repo.save(scenario)
+    }
+}
+
+class DeleteScenarioUseCase(
+    private val repo: ScenarioRepository,
+) {
+    fun execute(id: ScenarioId): AppResult<Unit> = repo.delete(id)
+}

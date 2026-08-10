@@ -1,10 +1,18 @@
 package ru.itcamp.elouav.infra.web.controller
 
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import org.slf4j.LoggerFactory
+import ru.itcamp.elouav.ai.port.LLMChat
 import ru.itcamp.elouav.app.scenario.ListScenariosUseCase
 import ru.itcamp.elouav.app.scenario.LoadScenarioUseCase
+import ru.itcamp.elouav.app.scenario.SaveScenarioUseCase
+import ru.itcamp.elouav.app.scenario.DeleteScenarioUseCase
 import ru.itcamp.elouav.app.session.SessionStore
+import ru.itcamp.elouav.app.session.Session
 import ru.itcamp.elouav.app.session.StartSessionUseCase
 import ru.itcamp.elouav.app.session.EndSessionUseCase
 import ru.itcamp.elouav.app.sim.ApplyActionUseCase
@@ -32,8 +40,33 @@ class ApiController(
     private val endSessionUseCase: EndSessionUseCase,
     private val listScenariosUseCase: ListScenariosUseCase,
     private val loadScenarioUseCase: LoadScenarioUseCase,
+    private val saveScenarioUseCase: SaveScenarioUseCase,
+    private val deleteScenarioUseCase: DeleteScenarioUseCase,
     private val scoreAttemptUseCase: ScoreAttemptUseCase,
+    private val llmChat: LLMChat,
+    @Value("\${KEYCLOAK_URL:http://localhost:8180}") private val keycloakUrl: String,
 ) {
+
+    private val log = LoggerFactory.getLogger("ru.itcamp.elouav.api")
+
+    @GetMapping("/health/keycloak")
+    fun checkKeycloak(): ResponseEntity<Map<String, String>> {
+        return try {
+            val client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(5))
+                .build()
+            val request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create("$keycloakUrl/realms/elouav"))
+                .timeout(java.time.Duration.ofSeconds(5))
+                .GET()
+                .build()
+            val response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
+            val status = if (response.statusCode() in 200..299) "UP" else "DOWN (${response.statusCode()})"
+            ResponseEntity.ok(mapOf("status" to status))
+        } catch (e: Exception) {
+            ResponseEntity.ok(mapOf("status" to "DOWN", "error" to (e.message ?: "unknown")))
+        }
+    }
 
     @GetMapping("/graph")
     fun getGraph(@RequestParam(defaultValue = "ELOU-AV") install: String): ResponseEntity<GraphDTO> {
@@ -79,13 +112,28 @@ class ApiController(
         @RequestBody req: StartSessionRequestDTO,
         @RequestHeader("X-User-Id") userId: String,
     ): ResponseEntity<SessionDTO> {
+        if (req.scenarioId.isBlank()) {
+            throw IllegalArgumentException("scenarioId не может быть пустым")
+        }
+        if (userId.isBlank()) {
+            throw IllegalArgumentException("userId не может быть пустым")
+        }
+
         val graphResult = graphRepo.load("ELOU-AV")
-        if (graphResult is AppResult.Err) return ResponseEntity.internalServerError().build()
+        if (graphResult is AppResult.Err) {
+            throw IllegalStateException("Граф установки недоступен")
+        }
+        val graph = (graphResult as AppResult.Ok).value
+
+        val existingSessions = sessionStore.all()
+            .filter { it.userId == UserId(userId) && it.scenarioId == ScenarioId(req.scenarioId) }
+        val nextAttempt = (existingSessions.maxOfOrNull { it.attempt } ?: 0) + 1
+
         val session = startSessionUseCase.execute(
             ScenarioId(req.scenarioId),
             UserId(userId),
-            (graphResult as AppResult.Ok).value,
-            req.attempt,
+            graph,
+            nextAttempt,
         )
         return ResponseEntity.ok(SessionDTO(
             id = session.id.value,
@@ -114,8 +162,19 @@ class ApiController(
         @PathVariable id: String,
         @RequestBody req: ActionRequestDTO,
     ): ResponseEntity<SimulationStepDTO> {
+        if (req.node.isBlank()) {
+            throw IllegalArgumentException("node не может быть пустым")
+        }
+        if (req.action.isBlank()) {
+            throw IllegalArgumentException("action не может быть пустым")
+        }
+
         val session = sessionStore.get(SessionId(id))
-            ?: return ResponseEntity.notFound().build()
+            ?: throw NoSuchElementException("Сессия $id не найдена")
+
+        if (!session.active) {
+            throw IllegalStateException("Сессия уже завершена")
+        }
 
         val actionReq = ActionRequest(NodeId(req.node), req.action, req.value)
         val result = applyActionUseCase.execute(session.graph, actionReq)
@@ -171,20 +230,35 @@ class ApiController(
 
                 ResponseEntity.ok(DTOMapper.toStepDTO(step))
             }
-            is AppResult.Err -> ResponseEntity.badRequest().build()
+            is AppResult.Err -> ResponseEntity.badRequest().body(
+                SimulationStepDTO(
+                    node = req.node,
+                    action = req.action,
+                    value = req.value,
+                    validationResult = "Rejected",
+                    chain = emptyList(),
+                    finalState = emptyMap(),
+                    stabilized = false,
+                )
+            )
         }
     }
 
     @PostMapping("/sessions/{id}/end")
     fun endSession(@PathVariable id: String): ResponseEntity<VerdictDTO> {
         val session = sessionStore.get(SessionId(id))
-            ?: return ResponseEntity.notFound().build()
+            ?: throw NoSuchElementException("Сессия $id не найдена")
+
+        if (!session.active) {
+            throw IllegalStateException("Сессия уже завершена")
+        }
 
         endSessionUseCase.execute(SessionId(id))
 
         val scenarioResult = loadScenarioUseCase.execute(session.scenarioId)
-        if (scenarioResult is AppResult.Err)
-            return ResponseEntity.internalServerError().build()
+        if (scenarioResult is AppResult.Err) {
+            throw IllegalStateException("Сценарий не найден: ${session.scenarioId.value}")
+        }
         val scenario = (scenarioResult as AppResult.Ok).value
 
         val auditResult = auditRepo.readBySession(SessionId(id))
@@ -216,6 +290,8 @@ class ApiController(
     fun listSessions(): ResponseEntity<List<SessionInfoDTO>> {
         val sessions = sessionStore.all().sortedByDescending { it.startedAt }
         return ResponseEntity.ok(sessions.map { s ->
+            val durationSec = s.endedAt?.let { Duration.between(s.startedAt, it).seconds }
+                ?: Duration.between(s.startedAt, Clock.now()).seconds
             SessionInfoDTO(
                 id = s.id.value,
                 scenarioId = s.scenarioId.value,
@@ -224,6 +300,7 @@ class ApiController(
                 active = s.active,
                 startedAt = s.startedAt.toString(),
                 endedAt = s.endedAt?.toString(),
+                durationSec = durationSec,
                 verdict = s.verdict?.let { v ->
                     VerdictDTO(
                         sessionId = v.sessionId,
@@ -246,7 +323,258 @@ class ApiController(
     @GetMapping("/sessions/{id}/state")
     fun getSessionState(@PathVariable id: String): ResponseEntity<GraphDTO> {
         val session = sessionStore.get(SessionId(id))
-            ?: return ResponseEntity.notFound().build()
+            ?: throw NoSuchElementException("Сессия $id не найдена")
         return ResponseEntity.ok(DTOMapper.toGraphDTO(session.graph))
+    }
+
+    // === Scenario CRUD (methodist) ===
+
+    @PostMapping("/scenarios")
+    fun createScenario(@RequestBody req: ScenarioCreateDTO): ResponseEntity<ScenarioDTO> {
+        val scenario = DTOMapper.fromCreateDTO(req)
+        val saveResult = saveScenarioUseCase.execute(scenario)
+        if (saveResult is AppResult.Err) {
+            throw IllegalArgumentException(saveResult.message)
+        }
+        return ResponseEntity.ok(DTOMapper.toScenarioDTO(scenario))
+    }
+
+    @PutMapping("/scenarios/{id}")
+    fun updateScenario(
+        @PathVariable id: String,
+        @RequestBody req: ScenarioCreateDTO,
+    ): ResponseEntity<ScenarioDTO> {
+        val existing = loadScenarioUseCase.execute(ScenarioId(id))
+        if (existing is AppResult.Err) {
+            throw NoSuchElementException("Сценарий $id не найден")
+        }
+        val scenario = DTOMapper.fromCreateDTO(req).copy(id = ScenarioId(id))
+        val saveResult = saveScenarioUseCase.execute(scenario)
+        if (saveResult is AppResult.Err) {
+            throw IllegalArgumentException(saveResult.message)
+        }
+        return ResponseEntity.ok(DTOMapper.toScenarioDTO(scenario))
+    }
+
+    @DeleteMapping("/scenarios/{id}")
+    fun deleteScenario(@PathVariable id: String): ResponseEntity<Map<String, String>> {
+        val result = deleteScenarioUseCase.execute(ScenarioId(id))
+        if (result is AppResult.Err) {
+            throw IllegalArgumentException(result.message)
+        }
+        return ResponseEntity.ok(mapOf("status" to "deleted", "id" to id))
+    }
+
+    @PostMapping("/scenarios/{id}/validate")
+    fun validateScenario(@PathVariable id: String): ResponseEntity<Map<String, Any>> {
+        val scenarioResult = loadScenarioUseCase.execute(ScenarioId(id))
+        if (scenarioResult is AppResult.Err) {
+            throw NoSuchElementException("Сценарий $id не найден")
+        }
+        val graphResult = graphRepo.load("ELOU-AV")
+        val graph = (graphResult as? AppResult.Ok)?.value
+            ?: throw IllegalStateException("Граф установки недоступен")
+        val errors = mutableListOf<String>()
+
+        val allowedNodes = (scenarioResult as AppResult.Ok).value.phases
+            .flatMap { it.expectedActions }
+            .map { it.node }
+            .distinct()
+        allowedNodes.forEach { nodeId ->
+            if (graph.node(NodeId(nodeId)) == null) {
+                errors.add("Узел '$nodeId' не найден в графе установки")
+            }
+        }
+
+        val valid = errors.isEmpty()
+        return ResponseEntity.ok(mapOf(
+            "valid" to valid,
+            "errors" to errors,
+        ))
+    }
+
+    // === AI endpoints ===
+
+    @PostMapping("/ai/scenario-draft")
+    fun generateScenarioDraft(@RequestBody req: ScenarioDraftRequestDTO): ResponseEntity<ScenarioDraftDTO> {
+        log.info("[AI scenario-draft] topic={} difficulty={} timeout={}", req.topic, req.difficulty, req.timeoutSec)
+        val systemPrompt = """
+            Ты — методист тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
+            Создай черновик сценария обучения в формате JSON.
+            Узлы графа: feed_pump (насос Н-82), preheater (теплообменник А-19), dehydrator (дегидратор Э-1), furnace (печь).
+            Действия: start, stop, set_power (0-100), set_temp (20-400).
+            Ответь СТРОГО в JSON без markdown-обрамления и без пояснений.
+            JSON-схема: {"name":"...","timeoutSec":1800,"difficulty":2,"phases":[{"id":"ph1","title":"...","expectedActions":[{"node":"feed_pump","action":"start","value":null}]}],"hints":[{"key":"ph1","text":"..."}]}
+            В expectedActions используй поля node, action, value (число или null).
+            Следи за балансом скобок: каждый { должен быть закрыт }, каждая [ закрыта ].
+        """.trimIndent()
+
+        val userPrompt = """
+            Тема сценария: ${req.topic ?: "Пуск установки"}
+            Сложность: ${req.difficulty ?: 2} (от 1 до 3)
+            Таймаут: ${req.timeoutSec ?: 1800} секунд
+            Создай 3-4 фазы с 2-3 действиями в каждой.
+        """.trimIndent()
+
+        val result = kotlinx.coroutines.runBlocking { llmChat.chat(systemPrompt, userPrompt, jsonMode = true) }
+        log.info("[AI scenario-draft] result={} error={}", result is AppResult.Ok, result is AppResult.Err)
+        return when (result) {
+            is AppResult.Ok -> {
+                val content = result.value
+                val jsonStr = extractJson(content)
+                try {
+                    val parsed: Map<String, Any> = jacksonObjectMapper().readValue(jsonStr)
+                    ResponseEntity.ok(ScenarioDraftDTO(scenario = parsed, error = null, rawText = null))
+                } catch (e: Exception) {
+                    ResponseEntity.ok(ScenarioDraftDTO(scenario = null, error = "Не удалось разобрать ответ ИИ: ${e.message}", rawText = content))
+                }
+            }
+            is AppResult.Err -> ResponseEntity.ok(ScenarioDraftDTO(scenario = null, error = result.message, rawText = null))
+        }
+    }
+
+    @PostMapping("/ai/explain-action")
+    fun explainAction(@RequestBody req: ExplainActionRequestDTO): ResponseEntity<ExplainActionDTO> {
+        log.info("[AI explain-action] node={} action={} value={} chainSize={}", req.node, req.action, req.value, req.chain?.size)
+        val systemPrompt = """
+            Ты — ИИ-ассистент тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
+            Объясни студенту, как его действие повлияло на установку.
+            Отвечай кратко на русском языке (2-4 предложения).
+        """.trimIndent()
+
+        val chainText = (req.chain ?: emptyList()).joinToString("; ") { c ->
+            val changed = (c["changed"] as? List<*>)?.joinToString(", ") ?: ""
+            "${c["node"]}: изменены $changed"
+        }
+
+        val userPrompt = """
+            Действие: ${req.action ?: "действие"} на узле ${req.node ?: "узел"}${req.value?.let { ", значение: $it" } ?: ""}
+            Каскадные изменения: ${if (chainText.isNotBlank()) chainText else "нет"}
+            Объясни физический смысл и влияние на установку.
+        """.trimIndent()
+
+        val result = kotlinx.coroutines.runBlocking { llmChat.chat(systemPrompt, userPrompt) }
+        log.info("[AI explain-action] result={} error={}", result is AppResult.Ok, result is AppResult.Err)
+        return when (result) {
+            is AppResult.Ok -> ResponseEntity.ok(ExplainActionDTO(text = result.value, isAI = true, error = false))
+            is AppResult.Err -> ResponseEntity.ok(ExplainActionDTO(text = "ИИ-пояснение недоступно: ${result.message}", isAI = true, error = true))
+        }
+    }
+
+    @PostMapping("/ai/session-analysis")
+    fun analyzeSession(@RequestBody req: SessionAnalysisRequestDTO): ResponseEntity<SessionAnalysisDTO> {
+        val session = sessionStore.get(SessionId(req.sessionId))
+            ?: throw NoSuchElementException("Сессия не найдена")
+
+        log.info("[AI session-analysis] sessionId={} user={} scenario={} score={}",
+            req.sessionId, session.userId.value, session.scenarioId.value, session.verdict?.score?.total)
+
+        val systemPrompt = """
+            Ты — ИИ-аналитик тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
+            Подготовь краткий разбор результатов сессии студента и рекомендации по обучению.
+            Отвечай на русском языке. Сначала анализ, затем рекомендации (каждая с новой строки, начиная с "- ").
+        """.trimIndent()
+
+        val verdict = session.verdict
+        val score = verdict?.score?.total ?: 0
+        val feedbackText = verdict?.feedback?.joinToString("; ") { it.text } ?: "нет обратной связи"
+
+        val userPrompt = """
+            Студент: ${session.userId.value}
+            Сценарий: ${session.scenarioId.value}
+            Попытка: ${session.attempt}
+            Балл: $score/100
+            Результат: ${verdict?.verdict?.name ?: "не завершён"}
+            Обратная связь от системы: $feedbackText
+            Дай разбор и 2-3 рекомендации.
+        """.trimIndent()
+
+        val result = kotlinx.coroutines.runBlocking { llmChat.chat(systemPrompt, userPrompt) }
+        log.info("[AI session-analysis] result={} error={}", result is AppResult.Ok, result is AppResult.Err)
+        return when (result) {
+            is AppResult.Ok -> {
+                val text = result.value
+                val recommendations = text.lines().filter { it.trim().startsWith("-") }.map { it.trim().removePrefix("-").trim() }
+                ResponseEntity.ok(SessionAnalysisDTO(text = text, recommendations = recommendations, isAI = true, error = false))
+            }
+            is AppResult.Err -> ResponseEntity.ok(SessionAnalysisDTO(
+                text = "ИИ-анализ недоступен: ${result.message}",
+                recommendations = emptyList(),
+                isAI = true,
+                error = true,
+            ))
+        }
+    }
+
+    @GetMapping("/sessions/{id}/hint")
+    fun getContextHint(@PathVariable id: String): ResponseEntity<Map<String, Any>> {
+        val session = sessionStore.get(SessionId(id))
+            ?: throw NoSuchElementException("Сессия $id не найдена")
+        val scenarioResult = loadScenarioUseCase.execute(session.scenarioId)
+        if (scenarioResult is AppResult.Err) {
+            throw NoSuchElementException("Сценарий не найден")
+        }
+        val scenario = (scenarioResult as AppResult.Ok).value
+        val auditResult = auditRepo.readBySession(SessionId(id))
+        val auditRecords = (auditResult as? AppResult.Ok)?.value ?: emptyList()
+
+        val userActions = auditRecords.filter { it.eventType == EventType.ACTION }
+        val hint = computeContextHint(scenario, userActions, session.graph)
+        return ResponseEntity.ok(hint)
+    }
+
+    private fun computeContextHint(
+        scenario: ru.itcamp.elouav.scenario.model.Scenario,
+        userActions: List<AuditRecord>,
+        graph: ru.itcamp.elouav.sim.model.Graph,
+    ): Map<String, Any> {
+        val allExpected = scenario.phases.flatMap { it.expectedActions }
+        if (allExpected.isEmpty()) return mapOf("text" to "Нет ожидаемых действий", "phase" to "")
+
+        val completedActions = userActions.mapNotNull { rec ->
+            val data = rec.data ?: return@mapNotNull null
+            Triple(data.node.value, data.action, data.value)
+        }
+
+        for (phase in scenario.phases) {
+            val phaseActions = phase.expectedActions
+            val allPhaseDone = phaseActions.all { ea ->
+                completedActions.any { (node, action, _) -> node == ea.node && action == ea.action }
+            }
+            if (!allPhaseDone) {
+                val nextAction = phaseActions.firstOrNull { ea ->
+                    !completedActions.any { (node, action, _) -> node == ea.node && action == ea.action }
+                }
+                if (nextAction != null) {
+                    val nodeName = graph.node(NodeId(nextAction.node))?.name ?: nextAction.node
+                    val valuePart = nextAction.value?.let { " = $it" } ?: ""
+                    val phaseHint = scenario.bankHints.find { it.key == phase.id }?.text ?: ""
+                    return mapOf(
+                        "text" to "Следующее действие: $nodeName — ${nextAction.action}$valuePart",
+                        "phase" to phase.title,
+                        "phaseId" to phase.id,
+                        "hint" to phaseHint,
+                        "node" to nextAction.node,
+                        "action" to nextAction.action,
+                    )
+                }
+            }
+        }
+
+        return mapOf("text" to "Все фазы выполнены. Можно завершать сессию.", "phase" to "Завершение")
+    }
+
+    private fun extractJson(content: String): String {
+        var s = content.trim()
+        if (s.startsWith("```")) {
+            val firstNl = s.indexOf("\n")
+            if (firstNl >= 0) s = s.substring(firstNl + 1)
+            val fenceEnd = s.lastIndexOf("```")
+            if (fenceEnd >= 0) s = s.substring(0, fenceEnd)
+            s = s.trim()
+        }
+        val jsonStart = s.indexOf("{")
+        val jsonEnd = s.lastIndexOf("}")
+        return if (jsonStart >= 0 && jsonEnd > jsonStart) s.substring(jsonStart, jsonEnd + 1) else s
     }
 }

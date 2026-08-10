@@ -42,9 +42,17 @@ class SecurityConfig {
             }
             authorizeHttpRequests {
                 authorize("/actuator/**", permitAll)
+                authorize("/api/health/**", permitAll)
 
                 authorize("/api/scenarios/**", hasAnyRole("student", "instructor", "methodist", "admin"))
+                authorize("GET", "/api/scenarios", hasAnyRole("student", "instructor", "methodist", "admin"))
+                authorize("POST", "/api/scenarios", hasAnyRole("methodist", "admin"))
+                authorize("PUT", "/api/scenarios/**", hasAnyRole("methodist", "admin"))
+                authorize("DELETE", "/api/scenarios/**", hasAnyRole("methodist", "admin"))
                 authorize("/api/graph", hasAnyRole("student", "instructor", "methodist", "admin"))
+
+                authorize("/api/ai/**", authenticated)
+                authorize("/api/sessions/*/hint", hasAnyRole("student", "instructor", "admin"))
 
                 authorize("POST", "/api/sessions", hasAnyRole("student", "instructor", "admin"))
                 authorize("GET", "/api/sessions", hasAnyRole("instructor", "admin"))

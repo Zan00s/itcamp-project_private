@@ -40,7 +40,7 @@ export default function ScenarioSelect({ embedded = false }: { embedded?: boolea
               <span style={badgeStyle}>Проходной: {sc.passingScore}</span>
             </div>
             <p style={{ color: '#aaa', fontSize: '0.9rem', margin: '0.5rem 0' }}>
-              Фаз: {sc.phases.length} | {sc.install}
+              Фаз: {sc.phases.length}
             </p>
             {sc.phases.map((ph) => (
               <div key={ph.id} style={{ fontSize: '0.85rem', color: '#888', padding: '2px 0' }}>

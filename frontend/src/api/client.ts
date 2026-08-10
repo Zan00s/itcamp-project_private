@@ -141,6 +141,7 @@ export interface SessionInfoDTO {
   active: boolean;
   startedAt: string;
   endedAt: string | null;
+  durationSec: number;
   verdict: VerdictDTO | null;
 }
 
@@ -192,6 +193,45 @@ export const apiClient = {
 
   async listAllSessions(): Promise<SessionInfoDTO[]> {
     const { data } = await api.get('/sessions');
+    return data;
+  },
+
+  async getContextHint(sessionId: string): Promise<{ text: string; phase: string; hint?: string }> {
+    const { data } = await api.get(`/sessions/${sessionId}/hint`);
+    return data;
+  },
+
+  async createScenario(req: any): Promise<ScenarioDTO> {
+    const { data } = await api.post('/scenarios', req);
+    return data;
+  },
+
+  async updateScenario(id: string, req: any): Promise<ScenarioDTO> {
+    const { data } = await api.put(`/scenarios/${id}`, req);
+    return data;
+  },
+
+  async deleteScenario(id: string): Promise<void> {
+    await api.delete(`/scenarios/${id}`);
+  },
+
+  async validateScenario(id: string): Promise<{ valid: boolean; errors: string[] }> {
+    const { data } = await api.post(`/scenarios/${id}/validate`);
+    return data;
+  },
+
+  async generateScenarioDraft(req: { topic?: string; difficulty?: number; timeoutSec?: number }): Promise<{ scenario?: any; error?: string; rawText?: string }> {
+    const { data } = await api.post('/ai/scenario-draft', req);
+    return data;
+  },
+
+  async explainAction(req: { node?: string; action?: string; value?: number; chain?: any[] }): Promise<{ text: string; isAI: boolean; error: boolean }> {
+    const { data } = await api.post('/ai/explain-action', req);
+    return data;
+  },
+
+  async analyzeSession(sessionId: string): Promise<{ text: string; recommendations: string[]; isAI: boolean; error: boolean }> {
+    const { data } = await api.post('/ai/session-analysis', { sessionId });
     return data;
   },
 };

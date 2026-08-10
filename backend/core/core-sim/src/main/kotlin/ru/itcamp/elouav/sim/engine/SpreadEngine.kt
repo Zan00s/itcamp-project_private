@@ -100,7 +100,14 @@ class SpreadEngine(
                     changed = true
 
                     updatedParams.forEach { (param, value) ->
-                        checkConstraints(nodeId, param, value, node.behavior, currentGraph)
+                        val constraintResult = checkConstraints(nodeId, param, value, node.behavior, currentGraph)
+                        if (constraintResult != null) {
+                            currentGraph = constraintResult
+                            val alarmNode = currentGraph.node(nodeId)
+                            if (alarmNode != null && alarmNode.state.mode == NodeMode.ALARM) {
+                                events.add(SimulationEvent(nodeId, mapOf("mode" to 1.0), Clock.now()))
+                            }
+                        }
                     }
                 }
             }
@@ -127,14 +134,14 @@ class SpreadEngine(
         if (constraints.min != null && result < constraints.min) {
             result = when (constraints.onViolate) {
                 ViolateAction.CLAMP -> constraints.min
-                ViolateAction.ALARM -> constraints.min
+                ViolateAction.ALARM -> result
                 ViolateAction.IGNORE -> result
             }
         }
         if (constraints.max != null && result > constraints.max) {
             result = when (constraints.onViolate) {
                 ViolateAction.CLAMP -> constraints.max
-                ViolateAction.ALARM -> constraints.max
+                ViolateAction.ALARM -> result
                 ViolateAction.IGNORE -> result
             }
         }
@@ -147,15 +154,16 @@ class SpreadEngine(
         value: Double,
         behavior: List<BehaviorRule>,
         graph: Graph,
-    ) {
-        val rule = behavior.find { it.output == param } ?: return
-        val constraint = rule.constraints ?: return
+    ): Graph? {
+        val rule = behavior.find { it.output == param } ?: return null
+        val constraint = rule.constraints ?: return null
         val result = constraint.check(value)
         if (result is ConstraintResult.Violated && constraint.onViolate == ViolateAction.ALARM) {
             val node = graph.node(nodeId)
             if (node != null && node.state.mode != NodeMode.ALARM) {
-                graph.updateNode(nodeId, node.state.withMode(NodeMode.ALARM))
+                return graph.updateNode(nodeId, node.state.withMode(NodeMode.ALARM))
             }
         }
+        return null
     }
 }

@@ -140,4 +140,67 @@ class SpreadEngineTest {
         val stopStep = (stopResult as ru.itcamp.elouav.shared.AppResult.Ok).value
         stopStep.finalState[NodeId("pump-1")]!!.mode shouldBe NodeMode.STOPPED
     }
+
+    @Test
+    fun `constraint alarm persists into final state`() {
+        val engine = SpreadEngine()
+
+        // Build a graph where cascade actually triggers constraint violation
+        val source = Node(
+            id = NodeId("src"),
+            type = "src",
+            name = "Source",
+            outputs = listOf(PortId("flow-out")),
+            state = NodeState(
+                mode = NodeMode.RUNNING,
+                parameters = mapOf("flow-out" to 0.0)
+            ),
+            actions = listOf(
+                Action("set_flow", "Flow", "flow-out", 0.0..500.0),
+            ),
+            behavior = listOf(
+                BehaviorRule("b_flow", "flow-out", "flow-out"),
+            ),
+        )
+        val consumer = Node(
+            id = NodeId("cons"),
+            type = "cons",
+            name = "Consumer",
+            inputs = listOf(PortId("flow-in")),
+            state = NodeState(
+                mode = NodeMode.RUNNING,
+                parameters = mapOf("inlet" to 0.0, "temp" to 20.0)
+            ),
+            behavior = listOf(
+                BehaviorRule("b_inlet", "inlet", "input.flow-in"),
+                BehaviorRule("b_temp", "temp", "inlet * 1.0",
+                    constraints = Constraint(max = 100.0, onViolate = ViolateAction.ALARM)),
+            ),
+        )
+        val edge = Edge("e1", NodeId("src"), NodeId("cons"), PortId("flow-out"), PortId("flow-in"))
+        val graph = Graph.of(listOf(source, consumer), listOf(edge))
+
+        // Set flow to 200 → inlet=200 → temp=200 > 100 → ALARM
+        val result = engine.applyAction(graph, ActionRequest(NodeId("src"), "set_flow", 200.0))
+        val step = (result as ru.itcamp.elouav.shared.AppResult.Ok).value
+        val consState = step.finalState[NodeId("cons")]!!
+        assert(consState.mode == NodeMode.ALARM) {
+            "Consumer should be in ALARM mode when temp exceeds 100, but mode=${consState.mode}, temp=${consState.parameter("temp")}"
+        }
+    }
+
+    @Test
+    fun `cascade chain records affected downstream nodes`() {
+        val engine = SpreadEngine()
+        val graph = makePumpAndFurnace()
+
+        val result = engine.applyAction(graph, ActionRequest(NodeId("pump-1"), "set_power", 80.0))
+        val step = (result as ru.itcamp.elouav.shared.AppResult.Ok).value
+
+        assert(step.chain.isNotEmpty()) { "Chain should not be empty after cascade" }
+        assert(step.chain.any { it.node == NodeId("furnace-1") }) {
+            "Chain should include furnace-1"
+        }
+        assert(step.events.isNotEmpty()) { "Events should be generated for cascade changes" }
+    }
 }

@@ -5,9 +5,11 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
 import ru.itcamp.elouav.ai.model.AIVerdict
 import ru.itcamp.elouav.ai.model.JudgeRequest
 import ru.itcamp.elouav.ai.model.Semantics
+import ru.itcamp.elouav.ai.port.LLMChat
 import ru.itcamp.elouav.ai.port.LLMJudge
 import ru.itcamp.elouav.ai.port.VerdictCache
 import ru.itcamp.elouav.shared.AppResult
@@ -26,21 +28,49 @@ class OpenAICompatibleLLMAdapter(
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build(),
-) : LLMJudge {
+) : LLMJudge, LLMChat {
 
+    private val log = LoggerFactory.getLogger("ru.itcamp.elouav.llm")
     private val promptVersion = 1
+
+    override suspend fun chat(systemPrompt: String, userPrompt: String): AppResult<String> =
+        chat(systemPrompt, userPrompt, jsonMode = false)
+
+    override suspend fun chat(systemPrompt: String, userPrompt: String, jsonMode: Boolean): AppResult<String> {
+        log.info("[LLM chat] model={}, jsonMode={}, systemPromptLen={}, userPromptLen={}", model, jsonMode, systemPrompt.length, userPrompt.length)
+        return try {
+            val response = withContext(Dispatchers.IO) {
+                callLLM(systemPrompt, userPrompt, temperature = 0.5, maxTokens = 800, jsonMode = jsonMode)
+            }
+            log.info("[LLM chat] response len={}, preview={}", response.length, response.take(200))
+            AppResult.Ok(response)
+        } catch (e: Exception) {
+            log.error("[LLM chat] FAILED: {}", e.message, e)
+            AppResult.Err("LLM chat failed: ${e.message}", e)
+        }
+    }
 
     override suspend fun judge(request: JudgeRequest): AppResult<AIVerdict> {
         val cacheKey = buildCacheKey(request)
-        cache?.get(cacheKey)?.let { return AppResult.Ok(it) }
+        cache?.get(cacheKey)?.let {
+            log.debug("[LLM judge] cache hit for key={}", cacheKey)
+            return AppResult.Ok(it)
+        }
 
         val prompt = buildPrompt(request)
         val startTime = System.currentTimeMillis()
 
         return try {
             val response = withContext(Dispatchers.IO) {
-                callLLM(prompt)
+                callLLM(
+                    systemPrompt = "Ты — эксперт-судья тренажёра оператора НПЗ. Отвечай только в JSON.",
+                    userPrompt = prompt,
+                    temperature = 0.3,
+                    maxTokens = 300,
+                    jsonMode = true,
+                )
             }
+            log.info("[LLM judge] response len={}, preview={}", response.length, response.take(200))
 
             val latency = System.currentTimeMillis() - startTime
             val verdict = parseVerdict(response, latency)
@@ -48,6 +78,7 @@ class OpenAICompatibleLLMAdapter(
             cache?.put(cacheKey, verdict)
             AppResult.Ok(verdict)
         } catch (e: Exception) {
+            log.error("[LLM judge] FAILED: {}", e.message, e)
             AppResult.Err("LLM judge failed: ${e.message}", e)
         }
     }
@@ -82,16 +113,30 @@ class OpenAICompatibleLLMAdapter(
             "$node(${params.entries.joinToString(", ") { "${it.key}=${it.value}" }})"
         }
 
-    private fun callLLM(prompt: String): String {
-        val requestBody = mapper.writeValueAsString(mapOf(
+    private fun callLLM(
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double = 0.3,
+        maxTokens: Int = 300,
+        jsonMode: Boolean = false,
+    ): String {
+        val bodyMap = mutableMapOf(
             "model" to model,
             "messages" to listOf(
-                mapOf("role" to "system", "content" to "Ты — эксперт-судья тренажёра оператора НПЗ. Отвечай только в JSON."),
-                mapOf("role" to "user", "content" to prompt),
+                mapOf("role" to "system", "content" to systemPrompt),
+                mapOf("role" to "user", "content" to userPrompt),
             ),
-            "temperature" to 0.3,
-            "max_tokens" to 300,
-        ))
+            "temperature" to temperature,
+            "max_tokens" to maxTokens,
+        )
+        if (jsonMode) {
+            bodyMap["response_format"] = mapOf("type" to "json_object")
+        }
+        val requestBody = mapper.writeValueAsString(bodyMap)
+
+        log.info("[LLM request] POST {}/v1/chat/completions model={} temp={} maxTokens={} jsonMode={}",
+            endpoint, model, temperature, maxTokens, jsonMode)
+        log.debug("[LLM request] body={}", requestBody)
 
         val request = HttpRequest.newBuilder()
             .uri(URI.create("$endpoint/v1/chat/completions"))
@@ -101,9 +146,15 @@ class OpenAICompatibleLLMAdapter(
             .POST(HttpRequest.BodyPublishers.ofString(requestBody))
             .build()
 
+        val startTime = System.currentTimeMillis()
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        val latency = System.currentTimeMillis() - startTime
+
+        log.info("[LLM response] status={} latency={}ms bodyLen={}", response.statusCode(), latency, response.body().length)
+        log.debug("[LLM response] body={}", response.body().take(2000))
 
         if (response.statusCode() !in 200..299) {
+            log.error("[LLM response] error status={}, body={}", response.statusCode(), response.body())
             throw RuntimeException("LLM API returned ${response.statusCode()}: ${response.body()}")
         }
 
@@ -111,7 +162,9 @@ class OpenAICompatibleLLMAdapter(
         val choices = json["choices"] as? List<*> ?: throw RuntimeException("No choices in response")
         val firstChoice = choices.firstOrNull() as? Map<*, *> ?: throw RuntimeException("Empty choices")
         val message = firstChoice["message"] as? Map<*, *> ?: throw RuntimeException("No message")
-        return message["content"] as? String ?: throw RuntimeException("No content")
+        val content = message["content"] as? String ?: throw RuntimeException("No content")
+        log.info("[LLM response] content len={} usage={}", content.length, json["usage"])
+        return content
     }
 
     private fun parseVerdict(content: String, latencyMs: Long): AIVerdict {

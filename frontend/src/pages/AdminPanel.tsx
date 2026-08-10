@@ -1,29 +1,70 @@
 import { useEffect, useState } from 'react';
+import { apiClient } from '../api/client';
+
+interface ServiceStatus {
+  name: string;
+  status: string;
+  detail?: string;
+}
 
 export default function AdminPanel() {
-  const [services, setServices] = useState<{ name: string; url: string; status: string }[]>([]);
+  const [services, setServices] = useState<ServiceStatus[]>([]);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     checkServices();
   }, []);
 
   const checkServices = async () => {
-    const list = [
-      { name: 'Backend API', url: 'http://localhost:8080/actuator/health', },
-      { name: 'Keycloak', url: 'http://localhost:8180/realms/elouav' },
-      { name: 'Frontend', url: 'http://localhost:3000' },
-    ];
-    const results = await Promise.all(
-      list.map(async (s) => {
-        try {
-          const res = await fetch(s.url);
-          return { ...s, status: res.ok ? 'OK' : `${res.status}` };
-        } catch {
-          return { ...s, status: 'DOWN' };
-        }
-      })
-    );
+    setChecking(true);
+    const results: ServiceStatus[] = [];
+
+    // Backend: try API call (relative URL, goes through nginx proxy)
+    try {
+      await apiClient.listScenarios();
+      results.push({ name: 'Backend API', status: 'OK' });
+    } catch (e: any) {
+      const code = e?.response?.status;
+      results.push({ name: 'Backend API', status: code ? `${code}` : 'DOWN', detail: e?.message });
+    }
+
+    // Backend actuator health (relative URL)
+    try {
+      const res = await fetch('/actuator/health');
+      if (res.ok) {
+        const json = await res.json();
+        results.push({ name: 'Backend Health', status: json.status === 'UP' ? 'OK' : json.status });
+      } else {
+        results.push({ name: 'Backend Health', status: `${res.status}` });
+      }
+    } catch {
+      results.push({ name: 'Backend Health', status: 'DOWN' });
+    }
+
+    // Frontend: if this page loaded, frontend is up
+    results.push({ name: 'Frontend', status: 'OK' });
+
+    // Keycloak: check via backend proxy (avoids CORS)
+    try {
+      const res = await fetch('/api/health/keycloak');
+      if (res.ok) {
+        const json = await res.json();
+        results.push({ name: 'Keycloak', status: json.status === 'UP' ? 'OK' : json.status });
+      } else {
+        results.push({ name: 'Keycloak', status: `${res.status}` });
+      }
+    } catch {
+      results.push({ name: 'Keycloak', status: 'НЕДОСТУПЕН' });
+    }
+
     setServices(results);
+    setChecking(false);
+  };
+
+  const statusColor = (s: string) => {
+    if (s === 'OK' || s === 'UP') return '#4caf50';
+    if (s === 'DOWN' || s === 'НЕДОСТУПЕН') return '#f44336';
+    return '#ff9800';
   };
 
   return (
@@ -34,12 +75,14 @@ export default function AdminPanel() {
       <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0 }}>Сервисы</h3>
-          <button onClick={checkServices} style={btnStyle}>Обновить</button>
+          <button onClick={checkServices} disabled={checking} style={btnStyle}>
+            {checking ? 'Проверка...' : 'Обновить'}
+          </button>
         </div>
         {services.map((s) => (
           <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #222' }}>
             <span>{s.name}</span>
-            <span style={{ color: s.status === 'OK' ? '#4caf50' : '#f44336' }}>{s.status}</span>
+            <span style={{ color: statusColor(s.status) }}>{s.status}</span>
           </div>
         ))}
       </div>
@@ -58,10 +101,9 @@ export default function AdminPanel() {
         <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem' }}>
           <h3>Ссылки</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <a href="http://localhost:8180" target="_blank" style={{ color: '#e94560' }}>Keycloak Admin →</a>
-            <a href="http://localhost:8080/actuator/health" target="_blank" style={{ color: '#e94560' }}>Backend Health →</a>
-            <a href="http://localhost:8080/api/scenarios" target="_blank" style={{ color: '#e94560' }}>API: Сценарии →</a>
-            <a href="http://localhost:8080/api/graph" target="_blank" style={{ color: '#e94560' }}>API: Граф →</a>
+            <a href="/actuator/health" target="_blank" style={{ color: '#e94560' }}>Проверка backend →</a>
+            <a href="/api/scenarios" target="_blank" style={{ color: '#e94560' }}>API: Сценарии →</a>
+            <a href="/api/graph" target="_blank" style={{ color: '#e94560' }}>API: Граф →</a>
           </div>
         </div>
       </div>

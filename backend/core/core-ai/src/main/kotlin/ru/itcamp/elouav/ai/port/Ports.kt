@@ -12,6 +12,11 @@ interface LLMJudge {
     suspend fun judge(request: JudgeRequest): AppResult<AIVerdict>
 }
 
+interface LLMChat {
+    suspend fun chat(systemPrompt: String, userPrompt: String): AppResult<String>
+    suspend fun chat(systemPrompt: String, userPrompt: String, jsonMode: Boolean): AppResult<String>
+}
+
 interface RiskPredictor {
     fun forecast(
         sessionId: String,

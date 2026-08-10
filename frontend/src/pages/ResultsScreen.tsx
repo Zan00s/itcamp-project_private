@@ -1,26 +1,20 @@
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import type { VerdictDTO } from '../api/client';
 
 const COMPONENT_LABELS: Record<string, string> = {
-  correctness: 'Правильность',
-  sequence: 'Последовательность',
-  efficiency: 'Эффективность',
-  safety: 'Безопасность',
-  timing: 'Тайминг',
-  semantics: 'Семантика (ИИ)',
-  reasoning: 'Рассуждения (ИИ)',
+  correctness: 'Корректность',
+  timing: 'Скорость',
 };
 
 const FEEDBACK_LABELS: Record<string, string> = {
   SEQUENCE_ERROR: 'Ошибка последовательности',
   OUT_OF_RANGE: 'Выход за пределы',
   SAFETY_VIOLATION: 'Нарушение безопасности',
-  TIMING: 'Тайминг',
+  TIMING: 'Скорость',
   SEMANTIC: 'Семантическая ошибка',
 };
 
 export default function ResultsScreen() {
-  const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
   const verdict = (location.state as { verdict?: VerdictDTO })?.verdict;
@@ -56,7 +50,7 @@ export default function ResultsScreen() {
             {isPassed ? 'СЦЕНАРИЙ ПРОЙДЕН' : verdict.verdict === 'TIMEOUT' ? 'ВРЕМЯ ВЫШЛО' : 'СЦЕНАРИЙ НЕ ПРОЙДЕН'}
           </div>
           <div style={{ color: '#888', marginTop: '0.5rem' }}>
-            Попытка: {verdict.attempt} | Сессия: {sessionId}
+            Попытка: {verdict.attempt}
           </div>
           {verdict.aiUsed && (
             <div style={{ marginTop: '0.5rem', padding: '4px 12px', background: '#0f3460', borderRadius: '12px', display: 'inline-block', fontSize: '0.8rem' }}>
@@ -68,7 +62,9 @@ export default function ResultsScreen() {
         {/* Component Breakdown */}
         <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem', marginBottom: '2rem' }}>
           <h3>Разбивка по компонентам</h3>
-          {Object.entries(verdict.componentScores).map(([comp, score]) => (
+          {Object.entries(verdict.componentScores)
+            .filter(([comp]) => comp === 'correctness' || comp === 'timing')
+            .map(([comp, score]) => (
             <div key={comp} style={{ marginBottom: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                 <span>{COMPONENT_LABELS[comp] || comp}</span>

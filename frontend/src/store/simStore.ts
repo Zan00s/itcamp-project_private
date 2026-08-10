@@ -25,6 +25,7 @@ interface SimState {
   startSession: (scenarioId: string) => Promise<void>;
   applyAction: (node: string, action: string, value?: number) => Promise<void>;
   endSession: () => Promise<void>;
+  resetForNewAttempt: () => void;
   clearError: () => void;
 }
 
@@ -68,7 +69,7 @@ export const useSimStore = create<SimState>((set, get) => ({
   },
 
   startSession: async (scenarioId: string) => {
-    set({ loading: true, error: null, journal: [] });
+    set({ loading: true, error: null, journal: [], session: null });
     try {
       const graph = await apiClient.getGraph();
       const session = await apiClient.startSession(scenarioId);
@@ -112,10 +113,14 @@ export const useSimStore = create<SimState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       await apiClient.endSession(session.id);
-      set({ session: null, loading: false });
+      set({ session: null, journal: [], loading: false });
     } catch (e: any) {
       set({ error: e.message, loading: false });
     }
+  },
+
+  resetForNewAttempt: () => {
+    set({ session: null, journal: [], error: null });
   },
 
   clearError: () => set({ error: null }),

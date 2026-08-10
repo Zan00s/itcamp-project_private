@@ -57,7 +57,7 @@ export default function Dashboard() {
         borderBottom: '1px solid #333',
       }}>
         <div style={{ display: 'flex', gap: '1.5rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1.2rem' }}>КТК ЭЛОУ-АВ</h2>
+          <h2 style={{ margin: 0, fontSize: '1.2rem' }}>КТК ЭЛОУ-АВТ</h2>
           {tabs.filter(t => t.show).map(t => (
             <button
               key={t.id}

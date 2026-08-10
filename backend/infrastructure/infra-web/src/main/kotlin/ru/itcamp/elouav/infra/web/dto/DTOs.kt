@@ -4,6 +4,7 @@ import ru.itcamp.elouav.scenario.model.Scenario
 import ru.itcamp.elouav.scoring.model.ScoreBreakdown
 import ru.itcamp.elouav.scoring.model.Verdict
 import ru.itcamp.elouav.shared.NodeId
+import ru.itcamp.elouav.shared.ScenarioId
 import ru.itcamp.elouav.sim.model.Graph
 import ru.itcamp.elouav.sim.model.Node
 import ru.itcamp.elouav.sim.model.NodeState
@@ -77,6 +78,7 @@ data class ScenarioDTO(
     val difficulty: Int,
     val phases: List<PhaseDTO>,
     val passingScore: Int,
+    val bankHints: List<HintDTO> = emptyList(),
 )
 
 data class PhaseDTO(
@@ -131,7 +133,65 @@ data class SessionInfoDTO(
     val active: Boolean,
     val startedAt: String,
     val endedAt: String?,
+    val durationSec: Long = 0,
     val verdict: VerdictDTO?,
+)
+
+data class ScenarioCreateDTO(
+    val name: String,
+    val install: String = "ELOU-AV",
+    val timeoutSec: Int = 1800,
+    val difficulty: Int = 2,
+    val passingScore: Int = 70,
+    val phases: List<PhaseCreateDTO>,
+    val hints: List<HintDTO>? = null,
+)
+
+data class PhaseCreateDTO(
+    val id: String,
+    val title: String,
+    val expectedActions: List<ExpectedActionDTO>,
+)
+
+data class HintDTO(
+    val key: String,
+    val text: String,
+)
+
+data class ScenarioDraftRequestDTO(
+    val topic: String? = null,
+    val difficulty: Int? = null,
+    val timeoutSec: Int? = null,
+)
+
+data class ScenarioDraftDTO(
+    val scenario: Map<String, Any>? = null,
+    val error: String? = null,
+    val rawText: String? = null,
+)
+
+data class ExplainActionRequestDTO(
+    val node: String? = null,
+    val action: String? = null,
+    val value: Double? = null,
+    val chain: List<Map<String, Any>>? = null,
+)
+
+data class ExplainActionDTO(
+    val text: String,
+    val isAI: Boolean = true,
+    val error: Boolean = false,
+)
+
+data class SessionAnalysisRequestDTO(
+    val sessionId: String,
+)
+
+data class SessionAnalysisDTO(
+    val text: String,
+    val recommendations: List<String>,
+    val isAI: Boolean = true,
+    val error: Boolean = false,
 )
 
 object DTOMapper {
@@ -181,6 +241,26 @@ object DTOMapper {
             })
         },
         passingScore = scenario.passingScore,
+        bankHints = scenario.bankHints.map { HintDTO(it.key, it.text) },
+    )
+
+    fun fromCreateDTO(req: ScenarioCreateDTO): Scenario = Scenario(
+        id = ScenarioId("custom-${System.currentTimeMillis()}"),
+        name = req.name,
+        install = req.install,
+        timeoutSec = req.timeoutSec,
+        difficulty = req.difficulty,
+        passingScore = req.passingScore,
+        phases = req.phases.map { ph ->
+            ru.itcamp.elouav.scenario.model.Phase(
+                id = ph.id,
+                title = ph.title,
+                expectedActions = ph.expectedActions.map {
+                    ru.itcamp.elouav.scenario.model.ExpectedAction(it.node, it.action, it.value)
+                },
+            )
+        },
+        bankHints = req.hints?.map { ru.itcamp.elouav.scenario.model.Hint(it.key, it.text) } ?: emptyList(),
     )
 
     fun toStepDTO(step: SimulationStep): SimulationStepDTO = SimulationStepDTO(

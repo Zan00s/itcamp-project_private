@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: elouav-postgres-local
+    environment:
+      POSTGRES_DB: elouav
+      POSTGRES_USER: elouav
+      POSTGRES_PASSWORD: elouav_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata-local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U elouav"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - local
+
+  redis:
+    image: redis:7-alpine
+    container_name: elouav-redis-local
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data-local:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - local
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    container_name: elouav-keycloak-local
+    command: ["start-dev", "--import-realm", "--http-port=8180", "--health-enabled=true"]
+    environment:
+      KC_HTTP_RELATIVE_PATH: /
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: true
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_ADMIN: http://localhost:8180
+      KC_DB: dev-file
+      KC_HEALTH_ENABLED: true
+      KC_HOSTNAME_STRICT: false
+    ports:
+      - "8180:8180"
+    volumes:
+      - ./keycloak-config/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloak-data-local:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8180; echo -e 'GET /realms/elouav HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3; grep -q '200' <&3"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+    networks:
+      - local
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prebuilt
+    container_name: elouav-backend-local
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: elouav
+      DB_USER: elouav
+      DB_PASS: elouav_dev
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KEYCLOAK_URL: http://keycloak:8180
+      LLM_ENDPOINT: https://llm.it-camp-2026.ru
+      LLM_API_KEY: sk-super-secret-master-key-adm-sb-818
+      LLM_MODEL: gigachat-2
+      JAVA_OPTS: -Xmx256m
+      LOG_LEVEL: DEBUG
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - local
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: http://localhost:8080/api
+        VITE_KEYCLOAK_URL: http://localhost:8180/realms/elouav
+        VITE_REDIRECT_URI: http://localhost:3000/callback
+        VITE_POST_LOGOUT_URI: http://localhost:3000/login
+    container_name: elouav-frontend-local
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+      - keycloak
+    networks:
+      - local
+
+volumes:
+  pgdata-local:
+  redis-data-local:
+  keycloak-data-local:
+
+networks:
+  local:
+    name: elouav-local
+    driver: bridge

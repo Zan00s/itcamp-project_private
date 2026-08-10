@@ -58,7 +58,7 @@ class InMemoryGraphRepository(
             val feedPump = Node(
                 id = NodeId("feed_pump"),
                 type = "feed_pump",
-                name = "Насос подачи сырой нефти",
+                name = "Н-82 Насос подачи",
                 outputs = listOf(PortId("flow-out")),
                 state = NodeState(
                     mode = NodeMode.STOPPED,
@@ -89,12 +89,17 @@ class InMemoryGraphRepository(
             val preheater = Node(
                 id = NodeId("preheater"),
                 type = "preheater",
-                name = "Теплообменник (подогрев)",
+                name = "А-19 Теплообменник",
                 inputs = listOf(PortId("flow-in")),
                 outputs = listOf(PortId("flow-out"), PortId("temp-out")),
                 state = NodeState(
                     mode = NodeMode.STOPPED,
                     parameters = mapOf("inlet_flow" to 0.0, "temperature" to 20.0),
+                ),
+                actions = listOf(
+                    Action("set_temp", "Установить температуру, °C", "temperature", 20.0..180.0),
+                    Action("start", "Пуск"),
+                    Action("stop", "Остановка"),
                 ),
                 behavior = listOf(
                     BehaviorRule("b_iflow", "inlet_flow", "input.flow-in",
@@ -140,9 +145,9 @@ class InMemoryGraphRepository(
             val dehydrator = Node(
                 id = NodeId("dehydrator"),
                 type = "electrodehydrator",
-                name = "Электродегидратор",
+                name = "Э-1 Электродегидратор",
                 inputs = listOf(PortId("flow-in"), PortId("temp-in")),
-                outputs = listOf(PortId("flow-out"), PortId("quality-out")),
+                outputs = listOf(PortId("flow-out"), PortId("quality-out"), PortId("drain-out")),
                 state = NodeState(
                     mode = NodeMode.STOPPED,
                     parameters = mapOf(
@@ -172,10 +177,59 @@ class InMemoryGraphRepository(
                 ),
             )
 
+            val tank = Node(
+                id = NodeId("tank"),
+                type = "tank",
+                name = "Е-16 Ёмкость",
+                inputs = listOf(PortId("drain-in")),
+                outputs = listOf(PortId("flow-out")),
+                state = NodeState(
+                    mode = NodeMode.STOPPED,
+                    parameters = mapOf("level" to 0.0, "drain_flow" to 0.0),
+                ),
+                actions = listOf(
+                    Action("start", "Пуск"),
+                    Action("stop", "Остановка"),
+                ),
+                behavior = listOf(
+                    BehaviorRule("b_drain", "drain_flow", "input.drain-in"),
+                    BehaviorRule("b_level", "level", "drain_flow * 0.5",
+                        constraints = Constraint(max = 100.0, onViolate = ViolateAction.ALARM)),
+                ),
+                paramLabels = mapOf(
+                    "level" to "Уровень, %",
+                    "drain_flow" to "Расход слива, м³/ч",
+                ),
+            )
+
+            val regulator = Node(
+                id = NodeId("regulator"),
+                type = "regulator",
+                name = "Р-11 Регулятор",
+                inputs = listOf(PortId("flow-in")),
+                state = NodeState(
+                    mode = NodeMode.STOPPED,
+                    parameters = mapOf("outlet_flow" to 0.0, "valve_pos" to 0.0),
+                ),
+                actions = listOf(
+                    Action("set_valve", "Положение клапана, %", "valve_pos", 0.0..100.0),
+                    Action("start", "Пуск"),
+                    Action("stop", "Остановка"),
+                ),
+                behavior = listOf(
+                    BehaviorRule("b_flow", "outlet_flow", "input.flow-in * valve_pos / 100.0",
+                        deps = listOf("input.flow-in", "valve_pos")),
+                ),
+                paramLabels = mapOf(
+                    "outlet_flow" to "Выходной расход, м³/ч",
+                    "valve_pos" to "Положение клапана, %",
+                ),
+            )
+
             val output = Node(
                 id = NodeId("output"),
                 type = "output",
-                name = "Выход обессоленной нефти",
+                name = "Выходной поток",
                 inputs = listOf(PortId("flow-in"), PortId("quality-in")),
                 state = NodeState(
                     mode = NodeMode.STOPPED,
@@ -195,15 +249,16 @@ class InMemoryGraphRepository(
 
             val edges = listOf(
                 Edge("e1", NodeId("feed_pump"), NodeId("preheater"), PortId("flow-out"), PortId("flow-in")),
-                Edge("e2", NodeId("preheater"), NodeId("furnace"), PortId("flow-out"), PortId("flow-in")),
-                Edge("e3", NodeId("preheater"), NodeId("furnace"), PortId("temp-out"), PortId("flow-in")),
-                Edge("e4", NodeId("furnace"), NodeId("dehydrator"), PortId("temp-out"), PortId("temp-in")),
-                Edge("e5", NodeId("preheater"), NodeId("dehydrator"), PortId("flow-out"), PortId("flow-in")),
-                Edge("e6", NodeId("dehydrator"), NodeId("output"), PortId("flow-out"), PortId("flow-in")),
-                Edge("e7", NodeId("dehydrator"), NodeId("output"), PortId("quality-out"), PortId("quality-in")),
+                Edge("e2", NodeId("preheater"), NodeId("dehydrator"), PortId("flow-out"), PortId("flow-in")),
+                Edge("e3", NodeId("preheater"), NodeId("dehydrator"), PortId("temp-out"), PortId("temp-in")),
+                Edge("e4", NodeId("dehydrator"), NodeId("output"), PortId("flow-out"), PortId("flow-in")),
+                Edge("e5", NodeId("dehydrator"), NodeId("output"), PortId("quality-out"), PortId("quality-in")),
+                Edge("e6", NodeId("dehydrator"), NodeId("tank"), PortId("drain-out"), PortId("drain-in")),
+                Edge("e7", NodeId("tank"), NodeId("regulator"), PortId("flow-out"), PortId("flow-in")),
+                Edge("e8", NodeId("preheater"), NodeId("furnace"), PortId("flow-out"), PortId("flow-in")),
             )
 
-            return Graph.of(listOf(feedPump, preheater, furnace, dehydrator, output), edges)
+            return Graph.of(listOf(feedPump, preheater, furnace, dehydrator, tank, regulator, output), edges)
         }
     }
 }
@@ -249,7 +304,7 @@ class InMemoryScenarioRepository : ScenarioRepository {
             Condition(node = "output", param = "salt_mg_l", op = Operator.LESS_THAN, value = 5.0),
         ),
         failureConditions = listOf(
-            Condition(node = "furnace", param = "temperature", op = Operator.GREATER_THAN, value = 400.0, critical = true),
+            Condition(node = "preheater", param = "temperature", op = Operator.GREATER_THAN, value = 180.0, critical = true),
             Condition(condition = "alarm_activated", critical = true),
         ),
         phases = listOf(
@@ -258,18 +313,18 @@ class InMemoryScenarioRepository : ScenarioRepository {
                 ExpectedAction("feed_pump", "set_power", 20.0, rampOk = listOf(10.0, 30.0)),
             )),
             Phase("ph2", "Выход на рабочий режим", listOf(
+                ExpectedAction("preheater", "start"),
                 ExpectedAction("feed_pump", "set_power", 60.0, rampOk = listOf(40.0, 80.0)),
-                ExpectedAction("furnace", "start"),
-                ExpectedAction("furnace", "set_temp", 330.0),
+                ExpectedAction("preheater", "set_temp", 120.0),
             )),
             Phase("ph3", "Стабилизация", listOf(
                 ExpectedAction("dehydrator", "start"),
             )),
         ),
         bankHints = listOf(
-            Hint("ph1", "Сначала плавно поднимите мощность насоса."),
-            Hint("ph2", "Включите печь и выведите на рабочую температуру 330°C."),
-            Hint("ph3", "Запустите электродегидратор для обессоливания."),
+            Hint("ph1", "Сначала запустите насос подачи Н-82 и установите начальную мощность 20%."),
+            Hint("ph2", "Включите теплообменник А-19, поднимите мощность насоса до 60% и установите температуру подогрева 120°C."),
+            Hint("ph3", "Запустите электродегидратор Э-1 для обессоливания нефти."),
         ),
     )
 

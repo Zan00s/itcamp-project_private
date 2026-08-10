@@ -8,6 +8,11 @@ spring:
     password: ${DB_PASS:elouav_dev}
     driver-class-name: org.postgresql.Driver
 
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
   security:
     oauth2:
       resourceserver:
@@ -26,7 +31,6 @@ spring:
 
   autoconfigure:
     exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
       - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
 
