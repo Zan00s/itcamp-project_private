@@ -79,9 +79,11 @@
         "http://localhost:5173/*",
         "https://localhost:3000/*",
         "https://localhost:5173/*",
+        "https://it-camp-2026.ru/*",
+        "https://www.it-camp-2026.ru/*",
         "https://*/*"
       ],
-      "webOrigins": ["http://localhost:3000", "http://localhost:5173", "https://*", "*"],
+      "webOrigins": ["http://localhost:3000", "http://localhost:5173", "https://it-camp-2026.ru", "https://api.it-camp-2026.ru", "https://*", "*"],
       "attributes": {
         "post.logout.redirect.uris": "http://localhost:3000/* https://*/*"
       },
