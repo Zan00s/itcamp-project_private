@@ -1,0 +1,110 @@
+name: Build and deploy
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Normalize image namespace
+        id: image-names
+        shell: bash
+        run: echo "namespace=${REGISTRY}/$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract backend image metadata
+        id: backend-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image-names.outputs.namespace }}/backend
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.backend-meta.outputs.tags }}
+          labels: ${{ steps.backend-meta.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Extract frontend image metadata
+        id: frontend-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image-names.outputs.namespace }}/frontend
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.frontend-meta.outputs.tags }}
+          labels: ${{ steps.frontend-meta.outputs.labels }}
+          build-args: |
+            VITE_API_BASE=${{ vars.VITE_API_BASE || '/api' }}
+            VITE_KEYCLOAK_URL=${{ vars.VITE_KEYCLOAK_URL || 'http://localhost:8180/realms/elouav' }}
+            VITE_REDIRECT_URI=${{ vars.VITE_REDIRECT_URI || 'http://localhost:3000/callback' }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  deploy:
+    name: Deploy on it-camp-main
+    needs: build-and-push
+    runs-on: [self-hosted, Linux, X64, gpu, main]
+    permissions:
+      contents: read
+      packages: read
+    environment:
+      name: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and start release
+        env:
+          IMAGE_NAMESPACE: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          IMAGE_NAMESPACE="$(printf '%s' "$IMAGE_NAMESPACE" | tr '[:upper:]' '[:lower:]')"
+          export BACKEND_IMAGE="${IMAGE_NAMESPACE}/backend:${IMAGE_TAG}"
+          export FRONTEND_IMAGE="${IMAGE_NAMESPACE}/frontend:${IMAGE_TAG}"
+          docker compose pull backend frontend
+          docker compose up -d --remove-orphans
+          docker compose ps
