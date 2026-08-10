@@ -7,10 +7,8 @@ cp .env.example .env
 # отредактируйте .env под ваше окружение
 docker compose up -d --build
 ```
-
 Все переменные имеют значения по умолчанию — проект запускается локально без изменений.
 
----
 
 ## Режим запуска
 
@@ -18,7 +16,71 @@ docker compose up -d --build
 |-----------|-------------|----------|----------|
 | `SPRING_PROFILES_ACTIVE` | `prod` | `dev`, `prod` | Профиль Spring Boot. **`dev`** — авторизация отключена, in-memory хранилище, быстрый старт без Keycloak/PostgreSQL/Redis. **`prod`** — полная авторизация через Keycloak, проверка JWT-токенов |
 
----
+
+## GitHub Actions: production deploy
+
+Откройте **Settings -> Secrets and variables -> Actions**. Значения из `Variables`
+используются для обычной конфигурации, а значения из `Secrets` доступны workflow
+только в замаскированном виде. Перед deploy workflow создает защищенный `.env` на
+self-hosted runner и передает его в `docker compose`.
+
+### Actions Variables
+
+Создайте следующие Repository variables:
+
+| Variable | Значение |
+|----------|----------|
+| `SPRING_PROFILES_ACTIVE` | `prod` |
+| `DB_HOST` | `postgres` |
+| `DB_PORT` | `5432` |
+| `DB_NAME` | `elouav` |
+| `DB_USER` | `elouav` |
+| `REDIS_HOST` | `redis` |
+| `REDIS_PORT` | `6379` |
+| `KC_BOOTSTRAP_ADMIN_USERNAME` | имя администратора Keycloak |
+| `KC_HOSTNAME` | `https://auth.it-camp-2026.ru` |
+| `KC_HOSTNAME_ADMIN` | `https://auth.it-camp-2026.ru` |
+| `KC_HTTP_PORT` | `8180` |
+| `KC_HTTP_ENABLED` | `true` |
+| `KC_REALM` | `elouav` |
+| `KC_DB_URL_HOST` | hostname внешнего PostgreSQL для Keycloak |
+| `KC_DB_URL_PORT` | `5432` |
+| `KC_DB_URL_DATABASE` | имя PostgreSQL database для Keycloak, сейчас `keycloak` |
+| `KC_DB_USERNAME` | пользователь PostgreSQL для Keycloak, сейчас `keycloak` |
+| `KC_HEALTH_ENABLED` | `true` |
+| `KC_METRICS_ENABLED` | `true` |
+| `KC_HOSTNAME_STRICT` | `false` |
+| `KC_PROXY_HEADERS` | `xforwarded` |
+| `KEYCLOAK_URL` | `https://auth.it-camp-2026.ru` |
+| `VITE_API_BASE` | `https://api.it-camp-2026.ru/api` |
+| `VITE_KEYCLOAK_URL` | `https://auth.it-camp-2026.ru/realms/elouav` |
+| `VITE_REDIRECT_URI` | `https://it-camp-2026.ru/callback` |
+| `LLM_ENDPOINT` | адрес LLM, доступный из backend-контейнера; не `localhost` |
+| `LLM_MODEL` | имя выбранной модели |
+| `JAVA_OPTS` | `-Xmx256m` |
+| `LOG_LEVEL` | `INFO` |
+
+`LLM_ENDPOINT` и `LLM_MODEL` нельзя корректно заполнить без адреса GPU/LLM-сервера
+и имени модели. Для Docker значение `http://localhost:11434` обычно неверно:
+оно указывает на контейнер backend.
+
+### Actions Secrets
+
+Создайте следующие Repository secrets:
+
+| Secret | Назначение |
+|--------|------------|
+| `DB_PASS` | пароль пользователя приложения PostgreSQL |
+| `KC_BOOTSTRAP_ADMIN_PASSWORD` | пароль администратора Keycloak |
+| `KC_DB_PASSWORD` | пароль PostgreSQL пользователя Keycloak |
+| `LLM_API_KEY` | API-ключ LLM |
+
+`GITHUB_TOKEN` создавать не нужно: это встроенный secret GitHub Actions, который
+используется для входа в GHCR.
+
+Пароли, которые ранее были записаны в `docker-compose.yml`, считаются раскрытыми.
+После первого успешного deploy рекомендуется заменить их на новые значения и
+обновить соответствующие Actions secrets.
 
 ## Публичные URL (доступны из браузера клиента)
 
