@@ -12,15 +12,7 @@ import { IconChatStroked } from '@consta/icons/IconChatStroked';
 import { IconCollapse } from '@consta/icons/IconCollapse';
 import { IconExpand } from '@consta/icons/IconExpand';
 import { useSimStore } from '../store/simStore';
-import { useThemeMode } from '../theme/ThemeContext';
 import { apiClient, type VerdictDTO } from '../api/client';
-
-const MODE_COLORS: Record<string, string> = {
-  STOPPED: '#888',
-  RUNNING: '#4caf50',
-  ALARM: '#f44336',
-  MAINTENANCE: '#ff9800',
-};
 
 const MODE_LABELS: Record<string, string> = {
   STOPPED: 'Остановлен',
@@ -36,6 +28,8 @@ const TYPE_LABELS: Record<string, string> = {
   tank: 'Ёмкость',
   regulator: 'Регулятор',
   output: 'Выход',
+  heat_exchanger: 'Теплообменник',
+  column: 'Колонна',
 };
 
 const RESULT_LABELS: Record<string, string> = {
@@ -52,6 +46,8 @@ const NODE_LABELS: Record<string, string> = {
   tank: 'Е-16',
   regulator: 'Р-11',
   output: 'Выход',
+  heat_exchanger: 'Т-1',
+  column: 'К-1',
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -62,6 +58,7 @@ const ACTION_LABELS: Record<string, string> = {
   set_valve: 'Задвижка, %',
   set_voltage: 'Подача напряжения',
   increase_drain: 'Увеличить сброс в Е-16',
+  set_drain: 'Расход слива, м³/ч',
 };
 
 function actionLabel(actionId: string): string {
@@ -83,7 +80,9 @@ const PARAM_LABELS: Record<string, string> = {
   level: 'Уровень',
   drain_flow: 'Слив',
   outlet_flow: 'Расх.вых',
-  valve_pos: 'Клапан',
+  valve_pos: 'Задвижка',
+  top_temp: 'Темп.верх',
+  bottom_temp: 'Темп.низ',
 };
 
 function paramLabel(key: string): string {
@@ -100,12 +99,11 @@ function formatTime(sec: number): string {
 export default function OperatorScreen() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
-  const { mode } = useThemeMode();
   const { graph, currentScenario, journal, loading, error, selectScenario, applyAction } = useSimStore();
   const sessionMode = useSimStore(s => s.mode);
   const isExam = sessionMode === 'exam';
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [actionValue, setActionValue] = useState<string>('');
+  const [actionValues, setActionValues] = useState<Record<string, string>>({});
   const [verdict, setVerdict] = useState<VerdictDTO | null>(null);
   const journalRef = useRef<HTMLDivElement>(null);
   const [showHint, setShowHint] = useState(false);
@@ -163,17 +161,26 @@ export default function OperatorScreen() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [sessionId]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+    const pollInterval = setInterval(() => {
+      useSimStore.getState().pollEvents();
+      apiClient.getSessionState(sessionId).then(g => useSimStore.setState({ graph: g })).catch(() => {});
+    }, 5000);
+    return () => clearInterval(pollInterval);
+  }, [sessionId]);
+
   const handleAction = async (nodeId: string, actionId: string) => {
     const node = graph?.nodes.find((n) => n.id === nodeId);
     const action = node?.actions.find((a) => a.id === actionId);
     if (action?.param && action.min !== null && action.max !== null) {
-      const val = parseFloat(actionValue);
+      const val = parseFloat(actionValues[actionId] || '');
       if (isNaN(val)) { alert(`Введите значение от ${action.min} до ${action.max}`); return; }
       await applyAction(nodeId, actionId, val);
     } else {
       await applyAction(nodeId, actionId);
     }
-    setActionValue('');
+    setActionValues(prev => { const n = { ...prev }; delete n[actionId]; return n; });
     const latest = useSimStore.getState().journal;
     if (latest.length > 0) {
       const lastEntry = latest[latest.length - 1];
@@ -275,7 +282,7 @@ export default function OperatorScreen() {
             </Card>
           )}
           <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
-            <Mnemoscheme graph={graph} selectedNode={selectedNode} highlightedNodes={highlightedNodes} onSelect={setSelectedNode} dark={mode === 'dark'} />
+            <Mnemoscheme graph={graph} selectedNode={selectedNode} highlightedNodes={highlightedNodes} onSelect={setSelectedNode} />
           </div>
         </div>
 
@@ -309,8 +316,8 @@ export default function OperatorScreen() {
                       <TextField
                         type="number"
                         placeholder={`${action.min} - ${action.max}`}
-                        value={actionValue}
-                        onChange={(value) => setActionValue(value || '')}
+                        value={actionValues[action.id] || ''}
+                        onChange={(value) => setActionValues(prev => ({ ...prev, [action.id]: value || '' }))}
                         style={{ marginBottom: 4 }}
                       />
                     )}
@@ -348,11 +355,20 @@ export default function OperatorScreen() {
             </div>
             <div ref={journalRef} style={{ flex: 1, overflow: 'auto' }}>
               {journal.length === 0 && <Text as="p" size="s" view="ghost">Нет событий</Text>}
-              {journal.map((entry, idx) => (
-                <Card key={idx} verticalSpace="s" horizontalSpace="m" style={{ marginBottom: 4, background: '#f5f5f5', borderLeft: `3px solid ${entry.result === 'Applied' ? '#52c41a' : entry.result === 'Clamped' ? '#faad14' : '#ff4d4f'}` }}>
+              {journal.map((entry, idx) => {
+                const isAlarm = entry.isAuto && (entry.eventType === 'ALARM');
+                const isWarning = entry.isAuto && (entry.eventType === 'WARNING');
+                const borderColor = isAlarm ? '#ff4d4f' : isWarning ? '#faad14' : entry.result === 'Applied' ? '#52c41a' : entry.result === 'Clamped' ? '#faad14' : '#ff4d4f';
+                const bg = isAlarm ? '#fff2f0' : isWarning ? '#fffbe6' : '#f5f5f5';
+                return (
+                <Card key={idx} verticalSpace="s" horizontalSpace="m" style={{ marginBottom: 4, background: bg, borderLeft: `3px solid ${borderColor}` }}>
                   <Text size="xs" view="ghost">{new Date(entry.timestamp).toLocaleTimeString()}</Text>
+                  {entry.isAuto && (isAlarm
+                    ? <Text size="xs" weight="semibold" style={{ color: '#ff4d4f' }}>⚠ АВАРИЯ</Text>
+                    : <Text size="xs" weight="semibold" style={{ color: '#faad14' }}>⚠ ПРЕДУПРЕЖДЕНИЕ</Text>
+                  )}
                   <Text size="m"><strong>{NODE_LABELS[entry.node] || entry.node}</strong>: {actionLabel(entry.action)}{entry.value !== null && ` = ${entry.value.toFixed(1)}`}</Text>
-                  <Text size="xs" view="ghost">Результат: {RESULT_LABELS[entry.result] || entry.result}</Text>
+                  {!entry.isAuto && <Text size="xs" view="ghost">Результат: {RESULT_LABELS[entry.result] || entry.result}</Text>}
                   {entry.chain.length > 0 && (
                     <div style={{ marginTop: 4, padding: 4, background: '#f0f9eb', borderRadius: 4 }}>
                       <Text size="xs" weight="semibold" style={{ color: '#52c41a' }}>Каскадное влияние:</Text>
@@ -366,7 +382,8 @@ export default function OperatorScreen() {
                     </div>
                   )}
                 </Card>
-              ))}
+                );
+              })}
             </div>
           </Card>
         )}
@@ -399,236 +416,372 @@ export default function OperatorScreen() {
 }
 
 interface SchemeColors {
-  bg: string; grid: string; header: string;
-  equipFill: string; equipDark: string;
-  pipe: string; arrow: string;
+  bg: string;
+  pipe: string; pipeSignal: string; arrow: string;
+  equipFill: string; equipStroke: string; equipDark: string;
   textMain: string; textSec: string;
-  paramBg: string; paramBorder: string; paramLabel: string;
-  instrFill: string; instrStroke: string; instrText: string;
-  flow: string; select: string; highlight: string;
-  flame: string; hv: string; water: string; valve: string;
-  legend: string;
+  instrBg: string; instrBorder: string; instrDivider: string;
+  paramBg: string; paramBorder: string;
+  activeGreen: string; stoppedGray: string; alarmRed: string; warnOrange: string;
+  select: string; highlight: string;
+  water: string; hv: string;
 }
 
-const DARK_COLORS: SchemeColors = {
-  bg: '#0d1117', grid: '#141b2a', header: '#161e2e',
-  equipFill: '#111a2a', equipDark: '#0a1220',
-  pipe: '#2a3a5a', arrow: '#3a5a7a',
-  textMain: '#c0c8d0', textSec: '#5a7a8a',
-  paramBg: '#0a0f1a', paramBorder: '#1e2d3d', paramLabel: '#5a7a8a',
-  instrFill: '#0d1520', instrStroke: '#3a5a7a', instrText: '#8ab4d8',
-  flow: '#4caf50', select: '#e94560', highlight: '#ffeb3b',
-  flame: '#ff6600', hv: '#ff9800', water: '#1565c0', valve: '#4a90d9',
-  legend: '#111a2a',
+const SCHEME_COLORS: SchemeColors = {
+  bg: '#FAFAF7',
+  pipe: '#5A2923', pipeSignal: '#666666', arrow: '#5A2923',
+  equipFill: '#D8DCE0', equipStroke: '#444444', equipDark: '#B8BEC4',
+  textMain: '#111111', textSec: '#555555',
+  instrBg: '#FFFFFF', instrBorder: '#333333', instrDivider: '#333333',
+  paramBg: '#FFFFFF', paramBorder: '#1565C0',
+  activeGreen: '#2E7D32', stoppedGray: '#888888', alarmRed: '#C62828', warnOrange: '#E65100',
+  select: '#1565C0', highlight: '#E65100',
+  water: '#1565C0', hv: '#E65100',
 };
 
-const LIGHT_COLORS: SchemeColors = {
-  bg: '#c8ced6', grid: '#bcc3cc', header: '#b0b8c2',
-  equipFill: '#ffffff', equipDark: '#e8ecf0',
-  pipe: '#5a6a7a', arrow: '#4a5a6a',
-  textMain: '#1a1a1a', textSec: '#5a6a7a',
-  paramBg: '#f0f2f5', paramBorder: '#c8ced6', paramLabel: '#5a6a7a',
-  instrFill: '#eef1f5', instrStroke: '#7a8a9a', instrText: '#2a4a6a',
-  flow: '#2e7d32', select: '#1565c0', highlight: '#e65100',
-  flame: '#d84315', hv: '#e65100', water: '#1565c0', valve: '#1976d2',
-  legend: '#dde2e8',
-};
+const FONT_FAMILY = 'Arial, Helvetica, sans-serif';
 
-function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect, dark }: {
+function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect }: {
   graph: any;
   selectedNode: string | null;
   highlightedNodes: Set<string>;
   onSelect: (id: string) => void;
-  dark: boolean;
 }) {
-  const c = dark ? DARK_COLORS : LIGHT_COLORS;
-  const svgW = 1000;
-  const svgH = 500;
-  const pipeY = 130;
+  const c = SCHEME_COLORS;
+  const svgW = 1100;
+  const svgH = 760;
+  const pipeY = 180;
 
   const getNode = (nodeId: string) => graph?.nodes.find((n: any) => n.id === nodeId);
-  const nodeColor = (n: any) => n ? (MODE_COLORS[n.mode] || (dark ? '#555' : '#999')) : (dark ? '#555' : '#999');
   const isRunning = (nodeId: string) => getNode(nodeId)?.mode === 'RUNNING';
+  const isAlarm = (nodeId: string) => getNode(nodeId)?.mode === 'ALARM';
+  const statusColor = (n: any) => n ? (n.mode === 'RUNNING' ? c.activeGreen : n.mode === 'ALARM' ? c.alarmRed : c.stoppedGray) : c.stoppedGray;
 
-  const paramBox = (x: number, y: number, label: string, value: number, unit: string, running: boolean) => {
-    const vcolor = running ? c.flow : c.textSec;
+  // ГОСТ 21.404-85: прибор на щите = кружок с горизонтальной чертой
+  // Верх: буквенный код (измеряемая величина + функция), низ: позиционный номер
+  const gostInstrument = (x: number, y: number, letters: string, num: string, alarm = false) => (
+    <g>
+      <circle cx={x} cy={y} r="14" fill={c.instrBg} stroke={alarm ? c.alarmRed : c.instrBorder} strokeWidth="1.5" />
+      <line x1={x - 14} y1={y} x2={x + 14} y2={y} stroke={c.instrDivider} strokeWidth="1" />
+      <text x={x} y={y - 3} textAnchor="middle" fill={c.textMain} fontSize="7" fontWeight="bold" fontFamily={FONT_FAMILY}>{letters}</text>
+      <text x={x} y={y + 9} textAnchor="middle" fill={c.textSec} fontSize="6" fontFamily={FONT_FAMILY}>{num}</text>
+    </g>
+  );
+
+  // Отборное устройство: сплошная тонкая линия (ГОСТ) от трубы к прибору
+  const tapLine = (x1: number, y1: number, x2: number, y2: number) => (
+    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={c.pipeSignal} strokeWidth="1" />
+  );
+
+  // Прибор на трубе: сплошная линия отбора + кружок ГОСТ
+  const instrumentOnPipe = (tapX: number, tapY: number, bx: number, by: number, letters: string, num: string, alarm = false) => (
+    <g>
+      {tapLine(tapX, tapY, bx, by)}
+      {gostInstrument(bx, by, letters, num, alarm)}
+    </g>
+  );
+
+  // SCADA-блок значения параметра: белый прямоугольник с синей рамкой
+  const paramBlock = (x: number, y: number, tag: string, value: number, unit: string, running: boolean) => {
+    const vcolor = running ? c.activeGreen : c.textSec;
     return (
       <g>
-        <rect x={x} y={y} width="92" height="28" rx="3" fill={c.paramBg} stroke={c.paramBorder} strokeWidth="1" />
-        <text x={x + 4} y={y + 11} fill={c.paramLabel} fontSize="7" fontFamily="monospace">{label}</text>
-        <text x={x + 4} y={y + 23} fill={vcolor} fontSize="11" fontFamily="monospace" fontWeight="bold">{value.toFixed(1)} {unit}</text>
+        <rect x={x} y={y} width="78" height="30" rx="2" fill={c.paramBg} stroke={c.paramBorder} strokeWidth="1" />
+        <text x={x + 39} y={y + 11} textAnchor="middle" fill={c.textSec} fontSize="7" fontWeight="bold" fontFamily={FONT_FAMILY}>{tag}</text>
+        <text x={x + 39} y={y + 24} textAnchor="middle" fill={vcolor} fontSize="10" fontWeight="bold" fontFamily={FONT_FAMILY}>{value.toFixed(1)} {unit}</text>
       </g>
     );
   };
 
-  const instrumentTag = (x: number, y: number, tag: string, label: string) => (
+  const flowLabel = (x: number, y: number, text: string) => (
     <g>
-      <circle cx={x} cy={y} r="13" fill={c.instrFill} stroke={c.instrStroke} strokeWidth="1.5" />
-      <line x1={x - 13} y1={y} x2={x - 20} y2={y} stroke={c.instrStroke} strokeWidth="1" />
-      <text x={x} y={y - 1} textAnchor="middle" fill={c.instrText} fontSize="7" fontWeight="bold">{tag}</text>
-      <text x={x} y={y + 8} textAnchor="middle" fill={c.textSec} fontSize="6">{label}</text>
+      <rect x={x} y={y} width={text.length * 6.5 + 8} height="16" rx="2" fill={c.instrBg} stroke={c.paramBorder} strokeWidth="0.8" />
+      <text x={x + 4} y={y + 11} fill={c.textMain} fontSize="8" fontFamily={FONT_FAMILY}>{text}</text>
     </g>
   );
 
-  const pipe = (x1: number, y1: number, x2: number, y2: number, running: boolean, w = 6) => (
+  const pipe = (x1: number, y1: number, x2: number, y2: number, running: boolean, w = 5) => (
     <g>
-      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={c.pipe} strokeWidth={w} />
-      {running && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={c.flow} strokeWidth={w - 2} strokeDasharray="8 4" />}
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={c.pipe} strokeWidth={w} strokeLinecap="round" />
+      {running && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={c.activeGreen} strokeWidth={w - 3} strokeDasharray="6 3" opacity="0.6" />}
     </g>
   );
 
   const arrow = (x: number, y: number, dir: 'right' | 'down' | 'left' | 'up') => {
-    const sz = 6;
+    const sz = 7;
     if (dir === 'right') return <polygon points={`${x},${y} ${x - sz},${y - sz} ${x - sz},${y + sz}`} fill={c.arrow} />;
     if (dir === 'down') return <polygon points={`${x},${y} ${x - sz},${y - sz} ${x + sz},${y - sz}`} fill={c.arrow} />;
     if (dir === 'left') return <polygon points={`${x},${y} ${x + sz},${y - sz} ${x + sz},${y + sz}`} fill={c.arrow} />;
     return <polygon points={`${x},${y} ${x - sz},${y + sz} ${x + sz},${y + sz}`} fill={c.arrow} />;
   };
 
+  // ГОСТ: клапан = два треугольника, регулирующий - с приводом
+  const valveSymbol = (x: number, y: number, open: boolean, vertical = false) => {
+    const s = 10;
+    if (vertical) {
+      return (
+        <g>
+          <polygon points={`${x - s},${y} ${x + s},${y} ${x},${y - s}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1.2" />
+          <polygon points={`${x - s},${y} ${x + s},${y} ${x},${y + s}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1.2" />
+          {open && <rect x={x - 2} y={y - s - 6} width="4" height="6" fill={c.activeGreen} />}
+        </g>
+      );
+    }
+    return (
+      <g>
+        <polygon points={`${x},${y - s} ${x},${y + s} ${x - s},${y}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1.2" />
+        <polygon points={`${x},${y - s} ${x},${y + s} ${x + s},${y}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1.2" />
+        {open && <rect x={x + s + 1} y={y - 2} width="6" height="4" fill={c.activeGreen} />}
+      </g>
+    );
+  };
+
+  // ГОСТ: исполнительный механизм (регулятор прямого действия)
+  const actuatorSymbol = (x: number, y: number, active: boolean) => (
+    <g>
+      <circle cx={x} cy={y} r="6" fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1" />
+      {active && <circle cx={x} cy={y} r="3" fill={c.activeGreen} />}
+    </g>
+  );
+
+  const dh = getNode('dehydrator')?.parameters;
+  const dhLow = (dh?.level_mm || 4000) < 3500;
+
   return (
-    <svg viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ background: c.bg, borderRadius: 8, width: '100%', height: 'auto', maxWidth: svgW, minHeight: 300, border: `1px solid ${dark ? '#1a2332' : '#a0a8b0'}` }}>
-      <defs>
-        <pattern id="scadaGrid" width="20" height="20" patternUnits="userSpaceOnUse">
-          <path d="M 20 0 L 0 0 0 20" fill="none" stroke={c.grid} strokeWidth="0.5" />
-        </pattern>
-      </defs>
-      <rect width={svgW} height={svgH} fill="url(#scadaGrid)" />
+    <svg viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ background: c.bg, borderRadius: 4, width: '100%', height: 'auto', maxWidth: svgW, minHeight: 300, border: '1px solid #CCCCCC' }}>
+      {/* === HEADER === */}
+      <text x="14" y="20" fill={c.textMain} fontSize="12" fontWeight="bold" fontFamily={FONT_FAMILY}>МНЕМОСХЕМА ЭЛОУ-АВТ - P&amp;ID</text>
+      <text x={svgW - 14} y="20" textAnchor="end" fill={c.textSec} fontSize="9" fontFamily={FONT_FAMILY}>{new Date().toLocaleTimeString('ru-RU')}</text>
+      <line x1="0" y1="28" x2={svgW} y2="28" stroke="#CCCCCC" strokeWidth="1" />
 
-      <rect x="0" y="0" width={svgW} height="24" fill={c.header} />
-      <text x="12" y="16" fill={c.instrText} fontSize="11" fontWeight="bold" fontFamily="monospace">МНЕМОСХЕМА ЭЛОУ-АВТ - P&amp;ID</text>
-      <text x={svgW - 12} y="16" textAnchor="end" fill={c.textSec} fontSize="9" fontFamily="monospace">{new Date().toLocaleTimeString('ru-RU')}</text>
+      {/* === FLOW LABELS === */}
+      {flowLabel(10, 166, 'Вода')}
+      {flowLabel(950, 166, 'Обезвож. нефть')}
 
-      {/* === MAIN LINE (y=130): Вода → Н-82 → А-19 → Э-1 → Частично обезвоженная нефть === */}
-      <text x="20" y="118" fill={c.textSec} fontSize="9" fontFamily="monospace">Вода</text>
-      {pipe(20, pipeY, 102, pipeY, isRunning('feed_pump'))}
-      {arrow(102, pipeY, 'right')}
+      {/* === MAIN PIPELINE: Вода → Н-82 → А-19 → Э-1 → Выход → Т-1 → К-1 === */}
+      {pipe(20, pipeY, 112, pipeY, isRunning('feed_pump'))}
+      {arrow(108, pipeY, 'right')}
+      {pipe(168, pipeY, 320, pipeY, isRunning('feed_pump'))}
+      {arrow(316, pipeY, 'right')}
+      {pipe(480, pipeY, 600, pipeY, isRunning('preheater'))}
+      {arrow(596, pipeY, 'right')}
+      {pipe(760, pipeY, 820, pipeY, isRunning('dehydrator'))}
+      {arrow(816, pipeY, 'right')}
+      {/* Т-1 → К-1 */}
+      {pipe(940, pipeY + 25, 940, 110, isRunning('heat_exchanger'), 4)}
+      {pipe(940, 110, 1000, 110, isRunning('heat_exchanger'), 4)}
+      {pipe(1000, 110, 1000, 160, isRunning('column'), 4)}
+      {arrow(1000, 156, 'down')}
+      {flowLabel(950, 96, 'На К-1')}
 
-      {pipe(158, pipeY, 300, pipeY, isRunning('feed_pump'))}
-      {arrow(300, pipeY, 'right')}
-
-      {pipe(460, pipeY, 560, pipeY, isRunning('preheater'))}
-      {arrow(560, pipeY, 'right')}
-
-      {pipe(720, pipeY, 860, pipeY, isRunning('dehydrator'))}
-      {arrow(860, pipeY, 'right')}
-      <text x="868" y="118" fill={c.textSec} fontSize="8" fontFamily="monospace">Частично обезвоженная нефть</text>
-
-      {/* === Below Э-1: vertical pipe down to Е-16 (сброс солёной воды) === */}
-      {pipe(640, 165, 640, 290, isRunning('dehydrator'), 5)}
-      {arrow(640, 290, 'down')}
-      <text x="648" y="230" fill={c.textSec} fontSize="7" fontFamily="monospace">сол. вода</text>
+      {/* === Э-1 drain down to Е-16 === */}
+      {pipe(680, 215, 680, 370, isRunning('dehydrator'), 4)}
+      {arrow(680, 366, 'down')}
+      {flowLabel(690, 280, 'Сол. вода')}
 
       {/* === Е-16 → Р-11 (left) === */}
-      {pipe(590, 317, 500, 317, isRunning('tank'), 5)}
-      {arrow(500, 317, 'left')}
-      <text x="510" y="310" fill={c.textSec} fontSize="7" fontFamily="monospace">нефть</text>
+      {pipe(630, 395, 540, 395, isRunning('tank'), 4)}
+      {arrow(544, 395, 'left')}
+      {flowLabel(548, 378, 'Нефть')}
 
-      {/* === Below Е-16: vertical pipe down → Стоки === */}
-      {pipe(640, 345, 640, 420, isRunning('tank'), 5)}
-      {arrow(640, 420, 'down')}
-      <text x="618" y="440" fill={c.textSec} fontSize="9" fontFamily="monospace">Стоки</text>
+      {/* === Е-16 drain down → Стоки === */}
+      {pipe(680, 425, 680, 520, isRunning('tank'), 4)}
+      {arrow(680, 516, 'down')}
+      {flowLabel(650, 532, 'Стоки')}
+
+      {/* === ГОСТ INSTRUMENTS ON MAIN PIPE === */}
+      {/* FR-495A: расход воды (на трубе Н-82→А-19) */}
+      {instrumentOnPipe(220, pipeY, 220, 130, 'FR', '495А')}
+      {paramBlock(181, 102, 'FR-495A', getNode('feed_pump')?.parameters?.flow_rate || 0, 'м³/ч', isRunning('feed_pump'))}
+
+      {/* FQR-3K-30: интегратор расхода воды (ниже) */}
+      {instrumentOnPipe(260, pipeY, 260, 130, 'FQR', '3К-30')}
+      {paramBlock(221, 102, 'FQR-30', getNode('feed_pump')?.parameters?.flow_rate || 0, 'м³/ч', isRunning('feed_pump'))}
+
+      {/* FR-492: расход нефти в Э-1 (на трубе А-19→Э-1) */}
+      {instrumentOnPipe(500, pipeY, 500, 130, 'FR', '492')}
+      {paramBlock(461, 102, 'FR-492', getNode('preheater')?.parameters?.inlet_flow || 0, 'м³/ч', isRunning('preheater'))}
+
+      {/* TR-41-12: температура в Э-1 (на трубе А-19→Э-1) */}
+      {instrumentOnPipe(540, pipeY, 540, 130, 'TR', '41-12')}
+      {paramBlock(501, 102, 'TR-41', getNode('preheater')?.parameters?.temperature || 0, '°C', isRunning('preheater'))}
+
+      {/* PRA-312: давление на выходе ЭЛОУ (на трубе Э-1→выход) */}
+      {instrumentOnPipe(820, pipeY, 820, 130, 'PRA', '312')}
+      {paramBlock(781, 102, 'PRA-312', dh?.pressure || 0, 'кгс', isRunning('dehydrator'))}
+
+      {/* === ГОСТ INSTRUMENTS ON DRAIN PIPE (Э-1→Е-16) === */}
+      {/* LRCA-641: уровень раздела фаз в Э-1 (с регулированием и сигнализацией) */}
+      {instrumentOnPipe(680, 300, 730, 300, 'LRCA', '641', dhLow)}
+      {paramBlock(748, 286, 'LRCA-641', dh?.level_mm || 0, 'мм', isRunning('dehydrator'))}
+
+      {/* LSA-641A: блокировка по уровню < 3500мм */}
+      {instrumentOnPipe(680, 330, 730, 330, 'LSA', '641А', dhLow)}
+      {dhLow && <text x={752} y={334} fill={c.alarmRed} fontSize="7" fontWeight="bold" fontFamily={FONT_FAMILY}>БЛОК!</text>}
+
+      {/* === ГОСТ INSTRUMENTS ON Е-16 === */}
+      {/* LRCA-645: уровень в Е-16 (на трубе Е-16→Р-11) */}
+      {instrumentOnPipe(580, 395, 580, 450, 'LRCA', '645')}
+      {paramBlock(541, 462, 'LRCA-645', getNode('tank')?.parameters?.level || 0, '%', isRunning('tank'))}
+
+      {/* PRC-313: давление в Е-16 (на трубе Е-16→Стоки) */}
+      {instrumentOnPipe(680, 470, 730, 470, 'PRC', '313')}
+      {paramBlock(748, 456, 'PRC-313', getNode('tank')?.parameters?.drain_flow || 0, 'м³/ч', isRunning('tank'))}
 
       {/* === EQUIPMENT === */}
       {graph?.nodes.map((node: any) => {
         const isSel = selectedNode === node.id;
         const isHi = highlightedNodes.has(node.id);
-        const color = nodeColor(node);
-        const selStroke = isSel ? c.select : isHi ? c.highlight : color;
-        const selW = (isSel || isHi) ? 3 : 1.5;
+        const stColor = statusColor(node);
+        const selStroke = isSel ? c.select : isHi ? c.highlight : c.equipStroke;
+        const selW = (isSel || isHi) ? 2.5 : 1.5;
         const label = NODE_LABELS[node.id] || node.name;
 
         if (node.type === 'feed_pump') {
-          const p = node.parameters;
-          const cx = 130, cy = pipeY;
+          const cx = 140, cy = pipeY;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              <circle cx={cx} cy={cy} r="28" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
-              <polygon points={`${cx - 16},${cy - 14} ${cx - 16},${cy + 14} ${cx + 16},${cy}`} fill="none" stroke={selStroke} strokeWidth={selW} />
-              <text x={cx} y={cy + 4} textAnchor="middle" fill={c.textMain} fontSize="9" fontWeight="bold">{label}</text>
-              <text x={cx} y={cy + 48} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {instrumentTag(cx - 35, cy + 30, 'FIT', '101')}
-              {paramBox(cx - 46, cy + 58, 'МОЩНОСТЬ', p.power_percent || 0, '%', node.mode === 'RUNNING')}
-              {paramBox(cx + 46, cy + 58, 'РАСХОД', p.flow_rate || 0, 'м³/ч', node.mode === 'RUNNING')}
+              <circle cx={cx} cy={cy} r="26" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <circle cx={cx} cy={cy} r="20" fill="none" stroke={c.equipStroke} strokeWidth="0.8" />
+              <polygon points={`${cx - 13},${cy - 11} ${cx - 13},${cy + 11} ${cx + 13},${cy}`} fill="none" stroke={selStroke} strokeWidth="1.5" />
+              {isRunning('feed_pump') && <circle cx={cx} cy={cy} r="5" fill={c.activeGreen} opacity="0.8" />}
+              {isAlarm('feed_pump') && <circle cx={cx + 18} cy={cy - 18} r="4" fill={c.alarmRed} />}
+              <text x={cx} y={cy + 44} textAnchor="middle" fill={c.textMain} fontSize="10" fontWeight="bold" fontFamily={FONT_FAMILY}>{label}</text>
+              <text x={cx} y={cy + 56} textAnchor="middle" fill={stColor} fontSize="8" fontFamily={FONT_FAMILY}>{MODE_LABELS[node.mode] || ''}</text>
+              {paramBlock(cx - 39, cy + 64, 'Н-82', node.parameters?.power_percent || 0, '%', isRunning('feed_pump'))}
             </g>
           );
         }
         if (node.type === 'preheater') {
-          const p = node.parameters;
-          const x = 300, y = 105;
+          const x = 320, y = 155;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              <rect x={x} y={y} width="160" height="50" rx="6" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
-              {[0, 1, 2, 3].map(i => <line key={i} x1={x + 8} y1={y + 10 + i * 10} x2={x + 152} y2={y + 10 + i * 10} stroke={color} strokeWidth="0.8" opacity="0.5" />)}
-              <rect x={x - 8} y={y + 4} width="8" height="42" fill={c.equipDark} stroke={selStroke} strokeWidth={selW} />
-              <rect x={x + 160} y={y + 4} width="8" height="42" fill={c.equipDark} stroke={selStroke} strokeWidth={selW} />
-              <text x={x + 80} y={y + 32} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold">{label}</text>
-              <text x={x + 80} y={y + 70} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {instrumentTag(x + 140, y - 10, 'TIC', '201')}
-              {paramBox(x + 20, y + 82, 'ТЕМПЕРАТУРА', p.temperature || 0, '°C', node.mode === 'RUNNING')}
+              <rect x={x} y={y} width="160" height="50" rx="8" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <rect x={x} y={y + 3} width="160" height="44" rx="8" fill="none" stroke={c.equipDark} strokeWidth="0.6" />
+              {[0, 1, 2, 3].map(i => <line key={i} x1={x + 10} y1={y + 12 + i * 9} x2={x + 150} y2={y + 12 + i * 9} stroke={c.equipDark} strokeWidth="0.8" opacity="0.6" />)}
+              <rect x={x - 6} y={y + 6} width="6" height="38" fill={c.equipDark} stroke={c.equipStroke} strokeWidth="0.8" />
+              <rect x={x + 160} y={y + 6} width="6" height="38" fill={c.equipDark} stroke={c.equipStroke} strokeWidth="0.8" />
+              <text x={x + 80} y={y + 30} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold" fontFamily={FONT_FAMILY}>{label}</text>
+              <text x={x + 80} y={y + 72} textAnchor="middle" fill={stColor} fontSize="8" fontFamily={FONT_FAMILY}>{MODE_LABELS[node.mode] || ''}</text>
             </g>
           );
         }
         if (node.type === 'electrodehydrator') {
           const p = node.parameters;
-          const x = 560, y = 95;
+          const x = 600, y = 145;
+          const hvActive = (p.voltage_on || 0) > 0.5;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
               <rect x={x} y={y} width="160" height="70" rx="10" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
-              {[25, 45, 65].map(dy => <line key={dy} x1={x + 15} y1={y + dy} x2={x + 145} y2={y + dy} stroke={c.hv} strokeWidth="1.5" opacity="0.6" />)}
-              <text x={x + 80} y={y + 14} textAnchor="middle" fill={c.hv} fontSize="8" fontFamily="monospace">≈ HV</text>
-              <text x={x + 80} y={y + 55} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold">{label}</text>
-              <text x={x + 80} y={y + 80} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {instrumentTag(x + 145, y + 5, 'WIT', '301')}
-              {instrumentTag(x + 145, y + 60, 'SIT', '302')}
-              {paramBox(x - 40, y + 102, 'ДАВЛ', p.pressure || 0, 'кгс', node.mode === 'RUNNING')}
-              {paramBox(x + 56, y + 102, 'УРОВЕНЬ', p.level_mm || 0, 'мм', node.mode === 'RUNNING')}
-              {paramBox(x + 152, y + 102, 'НАПР', p.voltage_on || 0, '', node.mode === 'RUNNING')}
+              <rect x={x} y={y + 3} width="160" height="64" rx="10" fill="none" stroke={c.equipDark} strokeWidth="0.6" />
+              {[25, 45, 65].map(dy => <line key={dy} x1={x + 15} y1={y + dy} x2={x + 145} y2={y + dy} stroke={hvActive ? c.hv : c.equipDark} strokeWidth="1.2" opacity={hvActive ? 0.7 : 0.4} />)}
+              <text x={x + 80} y={y + 14} textAnchor="middle" fill={hvActive ? c.hv : c.textSec} fontSize="8" fontWeight="bold" fontFamily={FONT_FAMILY}>≈ HV</text>
+              <text x={x + 80} y={y + 55} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold" fontFamily={FONT_FAMILY}>{label}</text>
+              <text x={x + 80} y={y + 84} textAnchor="middle" fill={stColor} fontSize="8" fontFamily={FONT_FAMILY}>{MODE_LABELS[node.mode] || ''}</text>
+              {dhLow && <circle cx={x + 150} cy={y + 10} r="4" fill={c.alarmRed} />}
             </g>
           );
         }
         if (node.type === 'tank') {
           const p = node.parameters;
-          const x = 590, y = 290;
+          const x = 630, y = 370;
+          const lvl = p.level || 0;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
               <rect x={x} y={y} width="100" height="55" rx="27" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
-              <text x={x + 50} y={y + 25} textAnchor="middle" fill={c.textMain} fontSize="10" fontWeight="bold">{label}</text>
-              <text x={x + 50} y={y + 40} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              <rect x={x + 8} y={y + 10} width="84" height="35" rx="17" fill="none" stroke={c.paramBorder} strokeWidth="0.5" />
-              <rect x={x + 8} y={y + 45 - (p.level || 0) * 0.35} width="84" height={(p.level || 0) * 0.35} rx="17" fill={c.water} opacity="0.3" />
-              {instrumentTag(x - 20, y + 10, 'LIT', '401')}
-              {paramBox(x - 6, y + 62, 'УРОВЕНЬ', p.level || 0, '%', node.mode === 'RUNNING')}
+              <rect x={x + 4} y={y + 4} width="92" height="47" rx="23" fill="none" stroke={c.equipDark} strokeWidth="0.6" />
+              <rect x={x + 8} y={y + 50 - lvl * 0.4} width="84" height={lvl * 0.4} rx="17" fill={c.water} opacity="0.15" />
+              <text x={x + 50} y={y + 26} textAnchor="middle" fill={c.textMain} fontSize="10" fontWeight="bold" fontFamily={FONT_FAMILY}>{label}</text>
+              <text x={x + 50} y={y + 40} textAnchor="middle" fill={stColor} fontSize="7" fontFamily={FONT_FAMILY}>{MODE_LABELS[node.mode] || ''}</text>
             </g>
           );
         }
         if (node.type === 'regulator') {
-          const p = node.parameters;
-          const x = 420, y = 300;
+          const x = 460, y = 375;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              <rect x={x} y={y} width="80" height="45" rx="4" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
-              <text x={x + 40} y={y + 22} textAnchor="middle" fill={c.textMain} fontSize="10" fontWeight="bold">{label}</text>
-              <text x={x + 40} y={y + 36} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {instrumentTag(x + 70, y - 5, 'FIC', '501')}
-              {paramBox(x - 6, y + 52, 'КЛАПАН', p.valve_pos || 0, '%', node.mode === 'RUNNING')}
+              <rect x={x} y={y} width="80" height="40" rx="4" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <rect x={x + 4} y={y + 4} width="72" height="32" rx="3" fill="none" stroke={c.equipDark} strokeWidth="0.6" />
+              <text x={x + 40} y={y + 20} textAnchor="middle" fill={c.textMain} fontSize="10" fontWeight="bold" fontFamily={FONT_FAMILY}>{label}</text>
+              <text x={x + 40} y={y + 33} textAnchor="middle" fill={stColor} fontSize="7" fontFamily={FONT_FAMILY}>{MODE_LABELS[node.mode] || ''}</text>
+              {/* ГОСТ: исполнительный механизм на клапане */}
+              {actuatorSymbol(x + 40, y - 8, isRunning('regulator'))}
+            </g>
+          );
+        }
+        if (node.type === 'heat_exchanger') {
+          const p = node.parameters;
+          const x = 820, y = 155;
+          return (
+            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
+              <rect x={x} y={y} width="120" height="50" rx="8" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <rect x={x} y={y + 3} width="120" height="44" rx="8" fill="none" stroke={c.equipDark} strokeWidth="0.6" />
+              {[0, 1, 2].map(i => <line key={i} x1={x + 8} y1={y + 12 + i * 10} x2={x + 112} y2={y + 12 + i * 10} stroke={c.equipDark} strokeWidth="0.8" opacity="0.6" />)}
+              <rect x={x - 6} y={y + 6} width="6" height="38" fill={c.equipDark} stroke={c.equipStroke} strokeWidth="0.8" />
+              <rect x={x + 120} y={y + 6} width="6" height="38" fill={c.equipDark} stroke={c.equipStroke} strokeWidth="0.8" />
+              <text x={x + 60} y={y + 30} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold" fontFamily={FONT_FAMILY}>{label}</text>
+              <text x={x + 60} y={y + 72} textAnchor="middle" fill={stColor} fontSize="8" fontFamily={FONT_FAMILY}>{MODE_LABELS[node.mode] || ''}</text>
+              {paramBlock(x + 21, y + 82, 'Т-1', p.temperature || 0, '°C', isRunning('heat_exchanger'))}
+            </g>
+          );
+        }
+        if (node.type === 'column') {
+          const p = node.parameters;
+          const cx = 1000, cy = 250;
+          const colH = 180;
+          return (
+            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
+              <ellipse cx={cx} cy={cy - colH / 2} rx="35" ry="12" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <rect x={cx - 35} y={cy - colH / 2} width="70" height={colH} fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <line x1={cx - 35} y1={cy - colH / 2} x2={cx + 35} y2={cy - colH / 2} stroke={c.equipDark} strokeWidth="0.6" />
+              {[0, 1, 2, 3, 4].map(i => <line key={i} x1={cx - 30} y1={cy - colH / 2 + 20 + i * 28} x2={cx + 30} y2={cy - colH / 2 + 20 + i * 28} stroke={c.equipDark} strokeWidth="0.6" opacity="0.5" />)}
+              <ellipse cx={cx} cy={cy + colH / 2} rx="35" ry="12" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <text x={cx} y={cy + 4} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold" fontFamily={FONT_FAMILY}>{label}</text>
+              <text x={cx} y={cy + 20} textAnchor="middle" fill={stColor} fontSize="8" fontFamily={FONT_FAMILY}>{MODE_LABELS[node.mode] || ''}</text>
+              {paramBlock(cx - 39, cy + colH / 2 + 18, 'К-1', p.top_temp || 0, '°C', isRunning('column'))}
             </g>
           );
         }
         return null;
       })}
 
-      {/* Legend */}
-      <rect x="0" y={svgH - 28} width={svgW} height="28" fill={c.legend} />
-      <circle cx="10" cy={svgH - 15} r="4" fill={dark ? '#4caf50' : '#2e7d32'} />
-      <text x="20" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">Работает</text>
-      <circle cx="80" cy={svgH - 15} r="4" fill={dark ? '#888' : '#999'} />
-      <text x="90" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">Остановлен</text>
-      <circle cx="160" cy={svgH - 15} r="4" fill={dark ? '#f44336' : '#c62828'} />
-      <text x="170" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">Авария</text>
-      <polygon points={`220,${svgH - 19} 220,${svgH - 11} 228,${svgH - 15}`} fill={c.valve} />
-      <text x="234" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">клапан</text>
-      <text x="280" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">→ поток</text>
-      <text x="340" y={svgH - 12} fill={c.instrText} fontSize="8" fontFamily="monospace">○ КИПиА</text>
+      {/* === INLINE VALVES (ГОСТ: задвижки) === */}
+      {/* Задвижка на трубопроводе в А-19 (два треугольника вершинами друг к другу) */}
+      {(() => {
+        const vx = 250, vy = pipeY;
+        const vp = getNode('preheater')?.parameters?.valve_pos ?? 100;
+        const open = vp > 50;
+        return (
+          <g>
+            <polygon points={`${vx - 10},${vy - 10} ${vx - 10},${vy + 10} ${vx},${vy}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1.2" />
+            <polygon points={`${vx + 10},${vy - 10} ${vx + 10},${vy + 10} ${vx},${vy}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1.2" />
+            {open && <rect x={vx - 2} y={vy - 18} width="4" height="8" fill={c.activeGreen} />}
+            {!open && vp === 0 && <rect x={vx - 2} y={vy - 18} width="4" height="8" fill={c.alarmRed} />}
+            <text x={vx} y={vy - 22} textAnchor="middle" fill={c.textSec} fontSize="7" fontFamily={FONT_FAMILY}>{vp.toFixed(0)}%</text>
+          </g>
+        );
+      })()}
+      {valveSymbol(680, 230, isRunning('dehydrator'), true)}
+
+      {/* === LEGEND (ГОСТ) === */}
+      <rect x="0" y={svgH - 30} width={svgW} height="30" fill="#F0F0F0" stroke="#CCCCCC" strokeWidth="0.5" />
+      <circle cx="14" cy={svgH - 15} r="5" fill={c.instrBg} stroke={c.instrBorder} strokeWidth="1.5" />
+      <line x1="9" y1={svgH - 15} x2="19" y2={svgH - 15} stroke={c.instrDivider} strokeWidth="1" />
+      <text x="26" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>КИПиА (на щите)</text>
+      <line x1="130" y1={svgH - 15} x2="160" y2={svgH - 15} stroke={c.pipe} strokeWidth="4" />
+      <text x="166" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>тех. трубопровод</text>
+      <line x1="280" y1={svgH - 15} x2="310" y2={svgH - 15} stroke={c.pipeSignal} strokeWidth="1" />
+      <text x="316" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>отборное устройство</text>
+      <circle cx="430" cy={svgH - 15} r="4" fill={c.activeGreen} />
+      <text x="440" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>работает</text>
+      <circle cx="500" cy={svgH - 15} r="4" fill={c.stoppedGray} />
+      <text x="510" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>остановлен</text>
+      <circle cx="570" cy={svgH - 15} r="4" fill={c.alarmRed} />
+      <text x="580" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>авария/блокировка</text>
+      <polygon points={`680,${svgH - 19} 680,${svgH - 11} 688,${svgH - 15}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="0.8" />
+      <polygon points={`688,${svgH - 19} 688,${svgH - 11} 680,${svgH - 15}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="0.8" />
+      <text x="696" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>клапан</text>
+      <text x="750" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily={FONT_FAMILY}>▶ поток</text>
     </svg>
   );
 }

@@ -23,11 +23,6 @@ const VERDICT_LABELS: Record<string, string> = {
   TIMEOUT: 'Время вышло',
 };
 
-const COMPONENT_LABELS: Record<string, string> = {
-  correctness: 'Корректность',
-  timing: 'Скорость',
-};
-
 type SortField = 'userId' | 'scenarioId' | 'attempt' | 'score' | 'verdict' | 'status' | 'duration';
 type SortDir = 'asc' | 'desc';
 
@@ -286,19 +281,6 @@ export default function InstructorDashboard() {
                     <Text size="xl" weight="bold" style={{ color: selected.verdict.verdict === 'PASSED' ? '#52c41a' : selected.verdict.verdict === 'TIMEOUT' ? '#faad14' : '#ff4d4f' }}>
                       {selected.verdict.score} / 100
                     </Text>
-                  </div>
-                  <div>
-                    <Text size="s" view="ghost" style={{ marginBottom: 4 }}>Показатели</Text>
-                    {(['correctness', 'timing'] as const).map(k => {
-                      const v = selected.verdict!.componentScores[k];
-                      if (v === undefined) return null;
-                      return (
-                        <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Text size="s">{COMPONENT_LABELS[k] || k}:</Text>
-                          <Text size="s" weight="semibold">{(v * 100).toFixed(0)}%</Text>
-                        </div>
-                      );
-                    })}
                   </div>
                   {selected.verdict.feedback.length > 0 && (
                     <div>

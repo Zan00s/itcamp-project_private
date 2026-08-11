@@ -21,6 +21,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-websocket")
     implementation("org.springframework.boot:spring-boot-starter-data-jdbc")
+    implementation("org.apache.poi:poi-ooxml:5.2.5")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     testImplementation("org.springframework.boot:spring-boot-starter-test")

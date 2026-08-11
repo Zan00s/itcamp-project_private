@@ -22,6 +22,7 @@ class SessionTimeoutScheduler(
     private val loadScenarioUseCase: LoadScenarioUseCase,
     private val scoreAttemptUseCase: ScoreAttemptUseCase,
     private val auditRepo: AuditRepository,
+    private val emergencyEventScheduler: EmergencyEventScheduler,
 ) {
     private val log = LoggerFactory.getLogger("ru.itcamp.elouav.scheduler")
 
@@ -47,6 +48,7 @@ class SessionTimeoutScheduler(
                     log.info("Авто-завершение сессии {} (превышен таймаут {}с, прошло {}с)",
                         session.id.value, timeout, elapsed)
                     endSessionUseCase.execute(session.id)
+                    emergencyEventScheduler.clearSession(session.id)
 
                     val auditResult = auditRepo.readBySession(session.id)
                     val auditRecords = (auditResult as? AppResult.Ok)?.value ?: emptyList()

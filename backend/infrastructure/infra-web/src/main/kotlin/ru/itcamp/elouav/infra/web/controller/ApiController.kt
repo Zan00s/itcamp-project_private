@@ -49,6 +49,7 @@ class ApiController(
     private val scoreAttemptUseCase: ScoreAttemptUseCase,
     private val llmChat: LLMChat,
     private val examAssignmentStore: ExamAssignmentStore,
+    private val emergencyEventScheduler: ru.itcamp.elouav.infra.web.scheduler.EmergencyEventScheduler,
     @Value("\${KEYCLOAK_URL:http://localhost:8180}") private val keycloakUrl: String,
 ) {
 
@@ -278,6 +279,7 @@ class ApiController(
         }
 
         endSessionUseCase.execute(SessionId(id))
+        emergencyEventScheduler.clearSession(SessionId(id))
 
         val scenarioResult = loadScenarioUseCase.execute(session.scenarioId)
         if (scenarioResult is AppResult.Err) {
@@ -389,6 +391,166 @@ class ApiController(
         return ResponseEntity.ok(mapOf("status" to "deleted", "id" to id))
     }
 
+    @PostMapping("/scenarios/upload-docx", consumes = ["multipart/form-data"])
+    fun uploadDocxScenario(
+        @RequestParam("file") file: org.springframework.web.multipart.MultipartFile,
+    ): ResponseEntity<Map<String, Any>> {
+        if (file.isEmpty) {
+            throw IllegalArgumentException("Файл пуст")
+        }
+        val originalName = file.originalFilename ?: "unknown.docx"
+        log.info("[upload-docx] Получен файл: {}, размер={} байт", originalName, file.size)
+
+        // Извлекаем текст из DOCX
+        val extractedText = extractDocxText(file.inputStream)
+        if (extractedText.isBlank()) {
+            throw IllegalArgumentException("Не удалось извлечь текст из DOCX — файл пуст или повреждён")
+        }
+        log.info("[upload-docx] Извлечён текст: {} символов", extractedText.length)
+
+        // Отправляем в LLM для генерации сценария
+        val systemPrompt = """
+            Ты — методист тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
+            На основе описания ситуации в виде обычного текста создай структурированный сценарий обучения в формате JSON.
+            Узлы графа: feed_pump (насос Н-82), preheater (смеситель А-19), dehydrator (электродегидратор Э-1), tank (ёмкость Е-16), regulator (регулятор Р-11), output (выход), heat_exchanger (теплообменник Т-1), column (колонна К-1).
+            Действия: start, stop, set_power (0-100), set_temp (20-200), set_valve (0-100), set_voltage (0-1), set_drain (0-15000), increase_drain.
+            Параметры узлов: power_percent, flow_rate, pressure_out, temperature, inlet_flow, pressure, level_mm, voltage_on, drain_flow, valve_pos, water_content, salt_mg_l, level, top_temp, bottom_temp.
+            Режимы узлов: RUNNING (работает), STOPPED (остановлен).
+            Ответь СТРОГО в JSON без markdown-обрамления и без пояснений.
+            JSON-схема: {"name":"...","timeoutSec":1800,"difficulty":2,"initialState":[{"node":"feed_pump","mode":"RUNNING","parameters":{"power_percent":80}}],"phases":[{"id":"ph1","title":"...","expectedActions":[{"node":"feed_pump","action":"start","value":null}]}],"hints":[{"key":"ph1","text":"..."}]}
+            В expectedActions используй поля node, action, value (число или null).
+            В initialState укажи узлы, которые уже работают и их параметры на момент начала сценария.
+            Следи за балансом скобок: каждый { должен быть закрыт }, каждая [ закрыта ].
+        """.trimIndent()
+
+        val userPrompt = """
+            Ниже приведено описание ситуации для сценария обучения оператора НПЗ.
+            Создай из него структурированный сценарий с 3-5 фазами, каждая фаза — 2-4 действия.
+            Если в тексте описана авария или нештатная ситуация — задай initialState с предаварийным состоянием узлов.
+            Описание:
+            
+            $extractedText
+        """.trimIndent()
+
+        val llmResult = kotlinx.coroutines.runBlocking { llmChat.chat(systemPrompt, userPrompt, jsonMode = true) }
+
+        return when (llmResult) {
+            is AppResult.Err -> ResponseEntity.ok(mapOf(
+                "success" to false,
+                "error" to "ИИ недоступен: ${llmResult.message}",
+                "extractedText" to extractedText,
+            ))
+            is AppResult.Ok -> {
+                val content = llmResult.value
+                val jsonStr = extractJson(content)
+                try {
+                    val parsed: Map<String, Any> = jacksonObjectMapper().readValue(jsonStr)
+
+                    // Создаём сценарий из распарсенного JSON
+                    val createDto = parseScenarioFromMap(parsed)
+                    val scenario = DTOMapper.fromCreateDTO(createDto)
+                    val saveResult = saveScenarioUseCase.execute(scenario)
+                    if (saveResult is AppResult.Err) {
+                        return ResponseEntity.ok(mapOf(
+                            "success" to false,
+                            "error" to saveResult.message,
+                            "scenario" to parsed,
+                            "rawText" to content,
+                        ))
+                    }
+
+                    log.info("[upload-docx] Сценарий '{}' сохранён: id={}", scenario.name, scenario.id.value)
+                    ResponseEntity.ok(mapOf(
+                        "success" to true,
+                        "scenario" to DTOMapper.toScenarioDTO(scenario),
+                        "extractedText" to extractedText,
+                    ))
+                } catch (e: Exception) {
+                    log.warn("[upload-docx] Не удалось разобрать JSON: {}", e.message)
+                    ResponseEntity.ok(mapOf(
+                        "success" to false,
+                        "error" to "Не удалось разобрать ответ ИИ: ${e.message}",
+                        "rawText" to content,
+                        "extractedText" to extractedText,
+                    ))
+                }
+            }
+        }
+    }
+
+    private fun extractDocxText(inputStream: java.io.InputStream): String {
+        val sb = StringBuilder()
+        org.apache.poi.xwpf.usermodel.XWPFDocument(inputStream).use { doc ->
+            for (para in doc.paragraphs) {
+                val text = para.text.trim()
+                if (text.isNotEmpty()) sb.append(text).append("\n")
+            }
+            for (table in doc.tables) {
+                for (row in table.rows) {
+                    val cells = row.tableCells.map { it.text.trim() }
+                    if (cells.any { it.isNotEmpty() }) {
+                        sb.append(cells.joinToString(" | ")).append("\n")
+                    }
+                }
+            }
+        }
+        return sb.toString().trim()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parseScenarioFromMap(map: Map<String, Any>): ScenarioCreateDTO {
+        val phasesRaw = (map["phases"] as? List<Any?>) ?: emptyList()
+        val phases = phasesRaw.mapIndexed { idx, ph ->
+            val p = ph as Map<String, Any>
+            val actionsRaw = (p["expectedActions"] as? List<Any?>) ?: emptyList()
+            PhaseCreateDTO(
+                id = (p["id"] as? String) ?: "ph${idx + 1}",
+                title = (p["title"] as? String) ?: "Фаза ${idx + 1}",
+                expectedActions = actionsRaw.map { a ->
+                    val am = a as Map<String, Any>
+                    ExpectedActionDTO(
+                        node = (am["node"] as? String) ?: "",
+                        action = (am["action"] as? String) ?: "",
+                        value = (am["value"] as? Number)?.toDouble(),
+                    )
+                },
+            )
+        }
+
+        val initialStateRaw = (map["initialState"] as? List<Any?>) ?: emptyList()
+        val initialState = initialStateRaw.map { s ->
+            val sm = s as Map<String, Any>
+            val paramsRaw = (sm["parameters"] as? Map<String, Any>) ?: emptyMap()
+            InitialStateNodeDTO(
+                node = (sm["node"] as? String) ?: "",
+                mode = (sm["mode"] as? String) ?: "RUNNING",
+                parameters = paramsRaw.entries
+                    .filter { it.value is Number }
+                    .associate { it.key to (it.value as Number).toDouble() },
+            )
+        }
+
+        val hintsRaw = (map["hints"] as? List<Any?>) ?: emptyList()
+        val hints = hintsRaw.map { h ->
+            val hm = h as Map<String, Any>
+            HintDTO(
+                key = (hm["key"] as? String) ?: "ph1",
+                text = (hm["text"] as? String) ?: "",
+            )
+        }
+
+        return ScenarioCreateDTO(
+            name = (map["name"] as? String) ?: "Импортированный сценарий",
+            install = "ELOU-AV",
+            timeoutSec = (map["timeoutSec"] as? Number)?.toInt() ?: 1800,
+            difficulty = (map["difficulty"] as? Number)?.toInt() ?: 2,
+            passingScore = 70,
+            phases = phases,
+            hints = hints,
+            initialState = initialState,
+        )
+    }
+
     @PostMapping("/scenarios/{id}/validate")
     fun validateScenario(@PathVariable id: String): ResponseEntity<Map<String, Any>> {
         val scenarioResult = loadScenarioUseCase.execute(ScenarioId(id))
@@ -425,9 +587,9 @@ class ApiController(
         val systemPrompt = """
             Ты — методист тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
             Создай черновик сценария обучения в формате JSON.
-            Узлы графа: feed_pump (насос Н-82), preheater (смеситель А-19), dehydrator (электродегидратор Э-1), tank (ёмкость Е-16), regulator (регулятор Р-11), output (выход).
-            Действия: start, stop, set_power (0-100), set_temp (20-140), set_valve (0-100), set_voltage (0-1), increase_drain.
-            Параметры узлов: power_percent, flow_rate, temperature, pressure, level_mm, voltage_on, water_content, salt_mg_l, level, valve_pos.
+            Узлы графа: feed_pump (насос Н-82), preheater (смеситель А-19), dehydrator (электродегидратор Э-1), tank (ёмкость Е-16), regulator (регулятор Р-11), output (выход), heat_exchanger (теплообменник Т-1), column (колонна К-1).
+            Действия: start, stop, set_power (0-100), set_temp (20-200), set_valve (0-100), set_voltage (0-1), set_drain (0-15000), increase_drain.
+            Параметры узлов: power_percent, flow_rate, pressure_out, temperature, inlet_flow, pressure, level_mm, voltage_on, drain_flow, valve_pos, water_content, salt_mg_l, level, top_temp, bottom_temp.
             Режимы узлов: RUNNING (работает), STOPPED (остановлен).
             Ответь СТРОГО в JSON без markdown-обрамления и без пояснений.
             JSON-схема: {"name":"...","timeoutSec":1800,"difficulty":2,"initialState":[{"node":"feed_pump","mode":"RUNNING","parameters":{"power_percent":80}}],"phases":[{"id":"ph1","title":"...","expectedActions":[{"node":"feed_pump","action":"start","value":null}]}],"hints":[{"key":"ph1","text":"..."}]}
@@ -545,6 +707,29 @@ class ApiController(
         }
     }
 
+    @GetMapping("/sessions/{id}/events")
+    fun getSessionEvents(@PathVariable id: String): ResponseEntity<List<Map<String, Any>>> {
+        val session = sessionStore.get(SessionId(id))
+            ?: throw NoSuchElementException("Сессия $id не найдена")
+        val auditResult = auditRepo.readBySession(SessionId(id))
+        val records = (auditResult as? AppResult.Ok)?.value ?: emptyList()
+        val events: List<Map<String, Any>> = records.filter {
+            it.eventType == EventType.ALARM || it.eventType == EventType.WARNING || it.eventType == EventType.AUTO_EVENT
+        }.map { rec ->
+            mapOf<String, Any>(
+                "timestamp" to rec.timestamp.toEpochMilli(),
+                "eventType" to rec.eventType.name,
+                "node" to (rec.data?.node?.value ?: ""),
+                "nodeLabel" to nodeLabelRu(rec.data?.node?.value ?: ""),
+                "action" to (rec.data?.action ?: ""),
+                "actionLabel" to actionLabelRu(rec.data?.action ?: ""),
+                "value" to (rec.data?.value as? Any ?: ""),
+                "result" to (rec.data?.result?.name ?: ""),
+            )
+        }
+        return ResponseEntity.ok(events)
+    }
+
     @GetMapping("/sessions/{id}/hint")
     fun getContextHint(@PathVariable id: String): ResponseEntity<Map<String, Any>> {
         val session = sessionStore.get(SessionId(id))
@@ -567,9 +752,10 @@ class ApiController(
         "stop" to "Остановка",
         "set_power" to "Мощность, %",
         "set_temp" to "Температура, °C",
-        "set_valve" to "Клапан, %",
+        "set_valve" to "Задвижка, %",
         "set_voltage" to "Подача напряжения",
         "increase_drain" to "Увеличить сброс в Е-16",
+        "set_drain" to "Расход слива, м³/ч",
     )
 
     private fun actionLabelRu(actionId: String): String = actionLabelsRu[actionId] ?: actionId
@@ -581,6 +767,8 @@ class ApiController(
         "tank" to "Е-16",
         "regulator" to "Р-11",
         "output" to "Выход",
+        "heat_exchanger" to "Т-1",
+        "column" to "К-1",
     )
 
     private fun nodeLabelRu(nodeId: String): String = nodeLabelsRu[nodeId] ?: nodeId

@@ -74,10 +74,10 @@ class InMemoryGraphRepository(
                     Action("stop", "Остановка"),
                 ),
                 behavior = listOf(
-                    BehaviorRule("b_flow", "flow_rate", "power_percent * 2.0",
+                    BehaviorRule("b_flow", "flow_rate", "power_percent * 1.5",
                         deps = listOf("power_percent")),
-                    BehaviorRule("b_pressure", "pressure_out", "8.0 + flow_rate * 0.02",
-                        deps = listOf("flow_rate")),
+                    BehaviorRule("b_pressure", "pressure_out", "15.0",
+                        deps = listOf("power_percent")),
                 ),
                 paramLabels = mapOf(
                     "power_percent" to "Мощность, %",
@@ -94,23 +94,25 @@ class InMemoryGraphRepository(
                 outputs = listOf(PortId("flow-out"), PortId("temp-out")),
                 state = NodeState(
                     mode = NodeMode.STOPPED,
-                    parameters = mapOf("inlet_flow" to 0.0, "temperature" to 20.0),
+                    parameters = mapOf("inlet_flow" to 0.0, "temperature" to 20.0, "valve_pos" to 100.0),
                 ),
                 actions = listOf(
                     Action("set_temp", "Установить температуру, °C", "temperature", 20.0..140.0),
+                    Action("set_valve", "Задвижка подачи нефти, %", "valve_pos", 0.0..100.0),
                     Action("start", "Пуск"),
                     Action("stop", "Остановка"),
                 ),
                 behavior = listOf(
-                    BehaviorRule("b_iflow", "inlet_flow", "input.flow-in",
-                        deps = listOf("input.flow-in")),
-                    BehaviorRule("b_temp", "temperature", "20.0 + inlet_flow * 2.0",
+                    BehaviorRule("b_iflow", "inlet_flow", "input.flow-in * valve_pos / 100.0",
+                        deps = listOf("input.flow-in", "valve_pos")),
+                    BehaviorRule("b_temp", "temperature", "20.0 + inlet_flow * 0.001",
                         deps = listOf("inlet_flow"),
                         constraints = Constraint(max = 140.0, onViolate = ViolateAction.ALARM)),
                 ),
                 paramLabels = mapOf(
                     "inlet_flow" to "Входной расход, м³/ч",
                     "temperature" to "Температура, °C",
+                    "valve_pos" to "Задвижка, %",
                 ),
             )
 
@@ -128,6 +130,7 @@ class InMemoryGraphRepository(
                         "pressure" to 0.0,
                         "level_mm" to 4000.0,
                         "voltage_on" to 0.0,
+                        "drain_flow" to 0.0,
                         "water_content" to 5.0,
                         "salt_mg_l" to 50.0,
                     ),
@@ -135,20 +138,20 @@ class InMemoryGraphRepository(
                 actions = listOf(
                     Action("start", "Пуск"),
                     Action("stop", "Остановка"),
-                    Action("set_valve", "Задвижка входа нефти, %", "inlet_valve", 0.0..100.0),
                     Action("set_voltage", "Подача напряжения", "voltage_on", 0.0..1.0),
-                    Action("increase_drain", "Увеличить сброс в Е-16"),
+                    Action("increase_drain", "Увеличить сброс в Е-16", "drain_flow", 0.0..15000.0),
+                    Action("set_drain", "Расход слива в Е-16, м³/ч", "drain_flow", 0.0..15000.0),
                 ),
                 behavior = listOf(
                     BehaviorRule("b_iflow", "inlet_flow", "input.flow-in"),
                     BehaviorRule("b_itemp", "inlet_temp", "input.temp-in"),
-                    BehaviorRule("b_pressure", "pressure", "4.5 + inlet_flow * 0.05",
-                        constraints = Constraint(min = 0.0, max = 10.0, onViolate = ViolateAction.ALARM)),
-                    BehaviorRule("b_level", "level_mm", "4000.0 - drain_flow * 10.0",
+                    BehaviorRule("b_pressure", "pressure", "4.5 + inlet_flow * 0.0003",
+                        constraints = Constraint(min = 0.0, max = 15.0, onViolate = ViolateAction.ALARM)),
+                    BehaviorRule("b_level", "level_mm", "6500.0 - drain_flow * 0.14",
                         constraints = Constraint(min = 0.0, onViolate = ViolateAction.ALARM)),
-                    BehaviorRule("b_water", "water_content", "5.0 - inlet_temp * 0.01",
+                    BehaviorRule("b_water", "water_content", "10.0 - inlet_temp * 0.01",
                         constraints = Constraint(min = 0.0, onViolate = ViolateAction.CLAMP)),
-                    BehaviorRule("b_salt", "salt_mg_l", "50.0 - inlet_temp * 0.1",
+                    BehaviorRule("b_salt", "salt_mg_l", "50.0 + (10.0 - inlet_temp * 0.01) * 10.0",
                         constraints = Constraint(min = 0.0, onViolate = ViolateAction.CLAMP)),
                 ),
                 paramLabels = mapOf(
@@ -157,6 +160,7 @@ class InMemoryGraphRepository(
                     "pressure" to "Давление, кгс/см²",
                     "level_mm" to "Уровень раздела фаз, мм",
                     "voltage_on" to "Напряжение на электродах",
+                    "drain_flow" to "Расход слива, м³/ч",
                     "water_content" to "Содержание воды, %",
                     "salt_mg_l" to "Содержание солей, мг/л",
                 ),
@@ -216,6 +220,7 @@ class InMemoryGraphRepository(
                 type = "output",
                 name = "Выходной поток",
                 inputs = listOf(PortId("flow-in"), PortId("quality-in")),
+                outputs = listOf(PortId("flow-out"), PortId("quality-out")),
                 state = NodeState(
                     mode = NodeMode.STOPPED,
                     parameters = mapOf("flow_rate" to 0.0, "water_content" to 5.0, "salt_mg_l" to 50.0),
@@ -232,6 +237,72 @@ class InMemoryGraphRepository(
                 ),
             )
 
+            val heatExchanger = Node(
+                id = NodeId("heat_exchanger"),
+                type = "heat_exchanger",
+                name = "Т-1 Теплообменник",
+                inputs = listOf(PortId("flow-in"), PortId("quality-in")),
+                outputs = listOf(PortId("flow-out"), PortId("quality-out"), PortId("temp-out")),
+                state = NodeState(
+                    mode = NodeMode.STOPPED,
+                    parameters = mapOf("inlet_flow" to 0.0, "temperature" to 20.0, "water_content" to 5.0, "salt_mg_l" to 50.0),
+                ),
+                actions = listOf(
+                    Action("set_temp", "Установить температуру, °C", "temperature", 20.0..200.0),
+                    Action("start", "Пуск"),
+                    Action("stop", "Остановка"),
+                ),
+                behavior = listOf(
+                    BehaviorRule("b_iflow", "inlet_flow", "input.flow-in"),
+                    BehaviorRule("b_temp", "temperature", "20.0 + inlet_flow * 0.005",
+                        deps = listOf("inlet_flow"),
+                        constraints = Constraint(max = 200.0, onViolate = ViolateAction.ALARM)),
+                    BehaviorRule("b_water", "water_content", "input.quality-in"),
+                    BehaviorRule("b_salt", "salt_mg_l", "input.quality-in"),
+                ),
+                paramLabels = mapOf(
+                    "inlet_flow" to "Входной расход, м³/ч",
+                    "temperature" to "Температура, °C",
+                    "water_content" to "Содержание воды, %",
+                    "salt_mg_l" to "Содержание солей, мг/л",
+                ),
+            )
+
+            val column = Node(
+                id = NodeId("column"),
+                type = "column",
+                name = "К-1 Колонна",
+                inputs = listOf(PortId("flow-in"), PortId("quality-in")),
+                outputs = listOf(PortId("flow-out"), PortId("quality-out")),
+                state = NodeState(
+                    mode = NodeMode.STOPPED,
+                    parameters = mapOf("inlet_flow" to 0.0, "temperature" to 20.0, "top_temp" to 20.0, "bottom_temp" to 20.0, "pressure" to 0.0, "water_content" to 5.0, "salt_mg_l" to 50.0),
+                ),
+                actions = listOf(
+                    Action("start", "Пуск"),
+                    Action("stop", "Остановка"),
+                    Action("set_temp", "Температура верха, °C", "top_temp", 20.0..150.0),
+                ),
+                behavior = listOf(
+                    BehaviorRule("b_iflow", "inlet_flow", "input.flow-in"),
+                    BehaviorRule("b_temp", "temperature", "20.0 + inlet_flow * 0.003",
+                        deps = listOf("inlet_flow")),
+                    BehaviorRule("b_pressure", "pressure", "1.0 + inlet_flow * 0.0001",
+                        deps = listOf("inlet_flow")),
+                    BehaviorRule("b_water", "water_content", "input.quality-in * 0.5"),
+                    BehaviorRule("b_salt", "salt_mg_l", "input.quality-in * 0.5"),
+                ),
+                paramLabels = mapOf(
+                    "inlet_flow" to "Входной расход, м³/ч",
+                    "temperature" to "Температура, °C",
+                    "top_temp" to "Температура верха, °C",
+                    "bottom_temp" to "Температура низа, °C",
+                    "pressure" to "Давление, кгс/см²",
+                    "water_content" to "Содержание воды, %",
+                    "salt_mg_l" to "Содержание солей, мг/л",
+                ),
+            )
+
             val edges = listOf(
                 Edge("e1", NodeId("feed_pump"), NodeId("preheater"), PortId("flow-out"), PortId("flow-in")),
                 Edge("e2", NodeId("preheater"), NodeId("dehydrator"), PortId("flow-out"), PortId("flow-in")),
@@ -240,9 +311,13 @@ class InMemoryGraphRepository(
                 Edge("e5", NodeId("dehydrator"), NodeId("output"), PortId("quality-out"), PortId("quality-in")),
                 Edge("e6", NodeId("dehydrator"), NodeId("tank"), PortId("drain-out"), PortId("drain-in")),
                 Edge("e7", NodeId("tank"), NodeId("regulator"), PortId("flow-out"), PortId("flow-in")),
+                Edge("e8", NodeId("output"), NodeId("heat_exchanger"), PortId("flow-out"), PortId("flow-in")),
+                Edge("e9", NodeId("output"), NodeId("heat_exchanger"), PortId("quality-out"), PortId("quality-in")),
+                Edge("e10", NodeId("heat_exchanger"), NodeId("column"), PortId("flow-out"), PortId("flow-in")),
+                Edge("e11", NodeId("heat_exchanger"), NodeId("column"), PortId("quality-out"), PortId("quality-in")),
             )
 
-            return Graph.of(listOf(feedPump, preheater, dehydrator, tank, regulator, output), edges)
+            return Graph.of(listOf(feedPump, preheater, dehydrator, tank, regulator, output, heatExchanger, column), edges)
         }
     }
 }
@@ -348,27 +423,65 @@ class InMemoryScenarioRepository : ScenarioRepository {
         install = "ELOU-AV",
         timeoutSec = 600,
         difficulty = 3,
+        setup = ScenarioSetup(
+            initialState = "warm",
+            nodesOverride = mapOf(
+                "feed_pump" to mapOf(
+                    "mode" to "RUNNING",
+                    "parameters" to mapOf("power_percent" to 100.0, "flow_rate" to 150.0, "pressure_out" to 15.0),
+                ),
+                "preheater" to mapOf(
+                    "mode" to "RUNNING",
+                    "parameters" to mapOf("inlet_flow" to 15000.0, "temperature" to 20.0, "valve_pos" to 100.0),
+                ),
+                "dehydrator" to mapOf(
+                    "mode" to "RUNNING",
+                    "parameters" to mapOf(
+                        "inlet_flow" to 15000.0, "inlet_temp" to 100.0, "pressure" to 8.0,
+                        "level_mm" to 6500.0, "voltage_on" to 1.0, "drain_flow" to 0.0,
+                        "water_content" to 10.0, "salt_mg_l" to 50.0,
+                    ),
+                ),
+                "tank" to mapOf(
+                    "mode" to "RUNNING",
+                    "parameters" to mapOf("level" to 0.0, "drain_flow" to 0.0),
+                ),
+                "regulator" to mapOf(
+                    "mode" to "STOPPED",
+                    "parameters" to mapOf("outlet_flow" to 0.0, "valve_pos" to 0.0),
+                ),
+            ),
+        ),
         successConditions = listOf(
-            Condition(node = "feed_pump", param = "flow_rate", op = Operator.GREATER_THAN, value = 5.0),
-            Condition(node = "dehydrator", param = "voltage_on", op = Operator.LESS_THAN, value = 0.5),
+            Condition(node = "feed_pump", param = "flow_rate", op = Operator.GREATER_THAN, value = 100.0),
+            Condition(node = "dehydrator", param = "salt_mg_l", op = Operator.LESS_THAN, value = 60.0),
+            Condition(node = "dehydrator", param = "level_mm", op = Operator.GREATER_THAN, value = 4000.0),
+            Condition(node = "preheater", param = "valve_pos", op = Operator.GREATER_THAN, value = 90.0),
         ),
         failureConditions = listOf(
             Condition(node = "dehydrator", param = "level_mm", op = Operator.LESS_THAN, value = 3500.0, critical = true),
+            Condition(node = "dehydrator", param = "pressure", op = Operator.GREATER_THAN, value = 15.0, critical = true),
             Condition(condition = "alarm_activated", critical = true),
         ),
         phases = listOf(
-            Phase("ph1", "Перевод в безопасный режим", listOf(
-                ExpectedAction("dehydrator", "set_voltage", 0.0),
-                ExpectedAction("dehydrator", "increase_drain"),
+            Phase("ph1", "Реакция на отказ (10с - 1мин)", listOf(
+                ExpectedAction("preheater", "set_valve", 0.0),
+                ExpectedAction("dehydrator", "set_drain", 14000.0),
             )),
-            Phase("ph2", "Перезапуск насоса", listOf(
+            Phase("ph2", "Восстановление (1 - 5мин)", listOf(
+                ExpectedAction("dehydrator", "set_drain", 0.0),
                 ExpectedAction("feed_pump", "start"),
-                ExpectedAction("feed_pump", "set_power", 40.0, rampOk = listOf(20.0, 60.0)),
+                ExpectedAction("feed_pump", "set_power", 100.0),
+                ExpectedAction("preheater", "set_valve", 100.0),
+            )),
+            Phase("ph3", "Стабилизация (5 - 10мин)", listOf(
+                ExpectedAction("dehydrator", "set_voltage", 1.0),
             )),
         ),
         bankHints = listOf(
-            Hint("ph1", "Отказ насоса Н-82! Срочно снимите напряжение с электродегидратора и увеличьте сброс в ёмкость Е-16."),
-            Hint("ph2", "Перезапустите насос Н-82 и выйдите на рабочий режим."),
+            Hint("ph1", "Авария! Насос Н-82 остановлен. Закройте задвижку подачи нефти в А-19 (0%), запустите сброс в Е-16 (14000 м³/ч) для снижения уровня в Э-1 до 4500мм."),
+            Hint("ph2", "Закройте сброс в Е-16, перезапустите насос Н-82 (расход 150 м³/ч, мощность 100%), откройте задвижку А-19 на 100%."),
+            Hint("ph3", "Проверьте показания Э-1: содержание солей должно вернуться к 50 мг/л. Завершите сценарий."),
         ),
     )
 }
