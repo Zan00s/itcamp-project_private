@@ -13,8 +13,8 @@ object AuthUserIdResolver {
         val principal = authentication.principal
         return when (principal) {
             is Jwt -> {
-                principal.getClaimAsString("preferred_username")
-                    ?: principal.getClaimAsString("sub")
+                (principal.claims["preferred_username"] as? String)
+                    ?: (principal.claims["sub"] as? String)
                     ?: principal.subject
             }
             else -> authentication.name

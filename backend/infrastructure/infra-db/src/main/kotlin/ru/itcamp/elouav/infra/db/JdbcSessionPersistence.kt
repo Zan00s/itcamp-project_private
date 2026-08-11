@@ -15,6 +15,10 @@ import ru.itcamp.elouav.app.session.Session
 import ru.itcamp.elouav.app.session.SessionPersistence
 import ru.itcamp.elouav.scoring.model.Verdict
 import ru.itcamp.elouav.scoring.model.VerdictType
+import ru.itcamp.elouav.scoring.model.ScoreBreakdown
+import ru.itcamp.elouav.scoring.model.Feedback
+import ru.itcamp.elouav.scoring.model.FeedbackType
+import java.time.Instant
 import ru.itcamp.elouav.shared.NodeId
 import ru.itcamp.elouav.shared.PortId
 import ru.itcamp.elouav.shared.ScenarioId
@@ -104,7 +108,7 @@ class JdbcSessionPersistence(
     }
 
     private fun sanitizeVerdict(verdict: Verdict): VerificationVerdict = VerificationVerdict(
-        sessionId = verdict.sessionId.value,
+        sessionId = verdict.sessionId,
         scenarioId = verdict.scenarioId,
         attempt = verdict.attempt,
         verdict = verdict.verdict.name,
@@ -122,7 +126,21 @@ class JdbcSessionPersistence(
                 val graphJson = rs.getString("graph")
                 val graph: Graph = mapper.readValue(graphJson)
                 val verdictJson = rs.getString("verdict")
-                val verdict: Verdict? = verdictJson?.let { mapper.readValue<VerificationVerdict>(it) }
+                val verdict: Verdict? = verdictJson?.let {
+                    val v = mapper.readValue<VerificationVerdict>(it)
+                    // Map stored VerificationVerdict back to domain Verdict (best-effort)
+                    Verdict(
+                        sessionId = v.sessionId,
+                        scenarioId = v.scenarioId,
+                        attempt = v.attempt,
+                        computedAt = Instant.now(),
+                        verdict = VerdictType.valueOf(v.verdict),
+                        score = ScoreBreakdown(total = v.score, componentScores = emptyMap()),
+                        achievements = v.achievements,
+                        feedback = emptyList(),
+                        aiUsed = v.aiUsed,
+                    )
+                }
                 Session(
                     id = SessionId(rs.getString("id")),
                     scenarioId = ScenarioId(rs.getString("scenario_id")),

@@ -787,12 +787,17 @@ class ApiController(
 
     private fun hasWriteAccess(authentication: Authentication): Boolean {
         val authorities = authentication.authorities.map { it.authority.lowercase() }
-        return authorities.contains("role_student") || authorities.contains("role_admin") || authorities.contains("role_instructor")
-            if (firstNl >= 0) s = s.substring(firstNl + 1)
-            val fenceEnd = s.lastIndexOf("```")
-            if (fenceEnd >= 0) s = s.substring(0, fenceEnd)
-            s = s.trim()
-        }
+        return authorities.contains("role_methodist") || authorities.contains("role_instructor") || authorities.contains("role_admin")
+    }
+
+    private fun extractJson(input: String): String {
+        var s = input
+        // If the model returned some leading text or code fence, strip it
+        val firstNl = s.indexOf('\n')
+        if (firstNl >= 0) s = s.substring(firstNl + 1)
+        val fenceEnd = s.lastIndexOf("```")
+        if (fenceEnd >= 0) s = s.substring(0, fenceEnd)
+        s = s.trim()
         val jsonStart = s.indexOf("{")
         val jsonEnd = s.lastIndexOf("}")
         return if (jsonStart >= 0 && jsonEnd > jsonStart) s.substring(jsonStart, jsonEnd + 1) else s
