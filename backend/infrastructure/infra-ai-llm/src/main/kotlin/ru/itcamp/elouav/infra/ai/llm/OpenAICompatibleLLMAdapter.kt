@@ -134,12 +134,15 @@ class OpenAICompatibleLLMAdapter(
         }
         val requestBody = mapper.writeValueAsString(bodyMap)
 
-        log.info("[LLM request] POST {}/v1/chat/completions model={} temp={} maxTokens={} jsonMode={}",
-            endpoint, model, temperature, maxTokens, jsonMode)
+        val base = endpoint.trimEnd('/')
+        val url = if (base.endsWith("/v1")) "$base/chat/completions" else "$base/v1/chat/completions"
+
+        log.info("[LLM request] POST {} model={} temp={} maxTokens={} jsonMode={}",
+            url, model, temperature, maxTokens, jsonMode)
         log.debug("[LLM request] body={}", requestBody)
 
         val request = HttpRequest.newBuilder()
-            .uri(URI.create("$endpoint/v1/chat/completions"))
+            .uri(URI.create(url))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer $apiKey")
             .timeout(Duration.ofSeconds(30))
