@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { apiClient, type GraphDTO, type SessionDTO, type ScenarioDTO } from '../api/client';
 
+export type SessionMode = 'training' | 'exam';
+
 interface JournalEntry {
   timestamp: number;
   node: string;
@@ -15,6 +17,7 @@ interface SimState {
   scenarios: ScenarioDTO[];
   currentScenario: ScenarioDTO | null;
   session: SessionDTO | null;
+  mode: SessionMode;
   journal: JournalEntry[];
   loading: boolean;
   error: string | null;
@@ -22,7 +25,7 @@ interface SimState {
   loadGraph: () => Promise<void>;
   loadScenarios: () => Promise<void>;
   selectScenario: (id: string) => Promise<void>;
-  startSession: (scenarioId: string) => Promise<void>;
+  startSession: (scenarioId: string, mode: SessionMode) => Promise<void>;
   applyAction: (node: string, action: string, value?: number) => Promise<void>;
   endSession: () => Promise<void>;
   resetForNewAttempt: () => void;
@@ -34,6 +37,7 @@ export const useSimStore = create<SimState>((set, get) => ({
   scenarios: [],
   currentScenario: null,
   session: null,
+  mode: 'training',
   journal: [],
   loading: false,
   error: null,
@@ -68,11 +72,11 @@ export const useSimStore = create<SimState>((set, get) => ({
     }
   },
 
-  startSession: async (scenarioId: string) => {
-    set({ loading: true, error: null, journal: [], session: null });
+  startSession: async (scenarioId: string, mode: SessionMode) => {
+    set({ loading: true, error: null, journal: [], session: null, mode });
     try {
-      const graph = await apiClient.getGraph();
       const session = await apiClient.startSession(scenarioId);
+      const graph = await apiClient.getSessionState(session.id);
       set({ graph, session, loading: false });
     } catch (e: any) {
       set({ error: e.message, loading: false });

@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSimStore } from '../store/simStore';
+import { Card } from '@consta/uikit/Card';
+import { Badge } from '@consta/uikit/Badge';
+import { Button } from '@consta/uikit/Button';
+import { Text } from '@consta/uikit/Text';
+import { SkeletonBrick } from '@consta/uikit/Skeleton';
+import { IconPlay } from '@consta/icons/IconPlay';
+import { useSimStore, type SessionMode } from '../store/simStore';
 import type { ScenarioDTO } from '../api/client';
 
 export default function ScenarioSelect({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { scenarios, loadScenarios, startSession, loading, error } = useSimStore();
   const [selected, setSelected] = useState<ScenarioDTO | null>(null);
+  const [mode, setMode] = useState<SessionMode>('training');
 
   useEffect(() => {
     loadScenarios();
@@ -14,58 +21,95 @@ export default function ScenarioSelect({ embedded = false }: { embedded?: boolea
 
   const handleStart = async () => {
     if (!selected) return;
-    await startSession(selected.id);
+    await startSession(selected.id, mode);
     const session = useSimStore.getState().session;
     if (session) navigate(`/operator/${session.id}`);
   };
 
-  const difficultyColor = (d: number) => d <= 1 ? '#4caf50' : d === 2 ? '#ff9800' : '#f44336';
+  const difficultyStatus = (d: number) => d <= 1 ? 'success' : d === 2 ? 'warning' : 'error';
 
   const content = (
     <>
-      {error && <div style={errorStyle}>{error}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.5rem' }}>
+      {error && (
+        <Card col={1} verticalSpace="s" horizontalSpace="m" style={{ marginBottom: 16, background: '#fff1f0', borderColor: '#ffa39e' }}>
+          <Text view="alert">{error}</Text>
+        </Card>
+      )}
+      {loading && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 16 }}>
+          {[0, 1, 2].map(i => (
+            <Card key={i} verticalSpace="l" horizontalSpace="l" col={1}>
+              <SkeletonBrick height="150px" width="100%" />
+            </Card>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 16 }}>
         {scenarios.map((sc) => (
-          <div
+          <Card
             key={sc.id}
+            verticalSpace="l"
+            horizontalSpace="l"
+            col={1}
+            style={{
+              cursor: 'pointer',
+              border: selected?.id === sc.id ? '2px solid #1677ff' : undefined,
+              transition: 'border 0.2s',
+            }}
             onClick={() => setSelected(sc)}
-            style={{ ...cardStyle, border: selected?.id === sc.id ? '2px solid #e94560' : '1px solid #333' }}
           >
-            <h3 style={{ margin: '0 0 0.5rem' }}>{sc.name}</h3>
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <span style={{ ...badgeStyle, background: difficultyColor(sc.difficulty) }}>
-                Сложность: {sc.difficulty}/3
-              </span>
-              <span style={badgeStyle}>{sc.timeoutSec / 60} мин</span>
-              <span style={badgeStyle}>Проходной: {sc.passingScore}</span>
+            <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 8 }}>{sc.name}</Text>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <Badge status={difficultyStatus(sc.difficulty)} label={`Сложность: ${sc.difficulty}/3`} />
+              <Badge label={`${sc.timeoutSec / 60} мин`} />
+              <Badge label={`Проходной: ${sc.passingScore}`} />
+              {sc.initialState && sc.initialState.length > 0 && (
+                <Badge status="system" label={`Старт с ${sc.initialState.length} узлами`} />
+              )}
             </div>
-            <p style={{ color: '#aaa', fontSize: '0.9rem', margin: '0.5rem 0' }}>
-              Фаз: {sc.phases.length}
-            </p>
+            <Text as="p" size="s" view="ghost" style={{ marginBottom: 4 }}>Фаз: {sc.phases.length}</Text>
             {sc.phases.map((ph) => (
-              <div key={ph.id} style={{ fontSize: '0.85rem', color: '#888', padding: '2px 0' }}>
+              <Text key={ph.id} as="p" size="xs" view="ghost">
                 • {ph.title} ({ph.expectedActions.length} действий)
-              </div>
+              </Text>
             ))}
-          </div>
+          </Card>
         ))}
       </div>
       {selected && (
-        <div style={{ position: 'fixed', bottom: '2rem', left: '50%', transform: 'translateX(-50%)' }}>
-          <button onClick={handleStart} disabled={loading} style={{ ...btnStyle, fontSize: '1.1rem', padding: '14px 48px', background: '#0f3460', border: '2px solid #e94560', color: '#e94560' }}>
-            {loading ? 'Запуск...' : `Начать: ${selected.name}`}
-          </button>
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, background: '#fff', padding: 8, borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+            <Button
+              label="Тренировка"
+              size="m"
+              view={mode === 'training' ? 'primary' : 'ghost'}
+              onClick={() => setMode('training')}
+            />
+            <Button
+              label="Экзамен"
+              size="m"
+              view={mode === 'exam' ? 'primary' : 'ghost'}
+              onClick={() => setMode('exam')}
+            />
+            <Button
+              label={`Начать: ${selected.name}`}
+              size="m"
+              view="primary"
+              iconLeft={IconPlay}
+              loading={loading}
+              onClick={handleStart}
+            />
+          </div>
+          {mode === 'exam' && (
+            <Text size="s" style={{ color: '#ff4d4f', background: '#fff', padding: '2px 8px', borderRadius: 4 }}>
+              Режим экзамена: подсказки и ИИ отключены, ограничение по времени
+            </Text>
+          )}
         </div>
       )}
     </>
   );
 
-  if (embedded) return content;
-
-  return <div style={{ minHeight: '100vh', background: '#1a1a2e', color: '#eee', padding: '2rem' }}>{content}</div>;
+  if (embedded) return <div>{content}</div>;
+  return <div style={{ padding: 24 }}>{content}</div>;
 }
-
-const btnStyle: React.CSSProperties = { padding: '8px 20px', background: '#16213e', color: '#eee', border: '1px solid #333', borderRadius: '6px', cursor: 'pointer' };
-const cardStyle: React.CSSProperties = { background: '#16213e', borderRadius: '12px', padding: '1.5rem', cursor: 'pointer' };
-const badgeStyle: React.CSSProperties = { padding: '2px 10px', borderRadius: '12px', fontSize: '0.8rem', background: '#333' };
-const errorStyle: React.CSSProperties = { background: '#f44336', color: '#fff', padding: '10px 20px', borderRadius: '8px', marginBottom: '1rem' };

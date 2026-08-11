@@ -26,6 +26,9 @@ import ru.itcamp.elouav.infra.web.dto.*
 import ru.itcamp.elouav.scoring.model.ScoringProfile
 import ru.itcamp.elouav.shared.*
 import ru.itcamp.elouav.sim.model.ActionRequest
+import ru.itcamp.elouav.sim.model.Graph
+import ru.itcamp.elouav.sim.model.NodeMode
+import ru.itcamp.elouav.sim.model.NodeState
 import ru.itcamp.elouav.sim.port.GraphRepository
 import java.time.Duration
 
@@ -123,7 +126,17 @@ class ApiController(
         if (graphResult is AppResult.Err) {
             throw IllegalStateException("Граф установки недоступен")
         }
-        val graph = (graphResult as AppResult.Ok).value
+        var graph = (graphResult as AppResult.Ok).value
+
+        val scenarioResult = loadScenarioUseCase.execute(ScenarioId(req.scenarioId))
+        if (scenarioResult is AppResult.Ok) {
+            val scenario = (scenarioResult as AppResult.Ok).value
+            val overrides = scenario.setup.nodesOverride
+            if (overrides.isNotEmpty()) {
+                graph = applyInitialState(graph, overrides)
+                log.info("[startSession] Применён initialState для сценария {} ({} узлов)", req.scenarioId, overrides.size)
+            }
+        }
 
         val existingSessions = sessionStore.all()
             .filter { it.userId == UserId(userId) && it.scenarioId == ScenarioId(req.scenarioId) }
@@ -174,6 +187,14 @@ class ApiController(
 
         if (!session.active) {
             throw IllegalStateException("Сессия уже завершена")
+        }
+
+        val scenarioResult = loadScenarioUseCase.execute(session.scenarioId)
+        if (scenarioResult is AppResult.Ok) {
+            val elapsed = Duration.between(session.startedAt, Clock.now()).seconds
+            if (elapsed > (scenarioResult as AppResult.Ok).value.timeoutSec.toLong()) {
+                throw IllegalStateException("Время сценария истекло (${elapsed}с > ${scenarioResult.value.timeoutSec}с). Сессия завершается.")
+            }
         }
 
         val actionReq = ActionRequest(NodeId(req.node), req.action, req.value)
@@ -250,6 +271,7 @@ class ApiController(
             ?: throw NoSuchElementException("Сессия $id не найдена")
 
         if (!session.active) {
+            session.verdict?.let { return ResponseEntity.ok(DTOMapper.toVerdictDTO(it)) }
             throw IllegalStateException("Сессия уже завершена")
         }
 
@@ -397,23 +419,38 @@ class ApiController(
 
     @PostMapping("/ai/scenario-draft")
     fun generateScenarioDraft(@RequestBody req: ScenarioDraftRequestDTO): ResponseEntity<ScenarioDraftDTO> {
-        log.info("[AI scenario-draft] topic={} difficulty={} timeout={}", req.topic, req.difficulty, req.timeoutSec)
+        log.info("[AI scenario-draft] topic={} difficulty={} timeout={} contextLen={}", req.topic, req.difficulty, req.timeoutSec, req.context?.length)
         val systemPrompt = """
             Ты — методист тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
             Создай черновик сценария обучения в формате JSON.
-            Узлы графа: feed_pump (насос Н-82), preheater (теплообменник А-19), dehydrator (дегидратор Э-1), furnace (печь).
-            Действия: start, stop, set_power (0-100), set_temp (20-400).
+            Узлы графа: feed_pump (насос Н-82), preheater (теплообменник А-19), dehydrator (дегидратор Э-1), furnace (печь), tank (ёмкость Е-16), regulator (регулятор Р-11).
+            Действия: start, stop, set_power (0-100), set_temp (20-400), set_valve (0-100).
+            Параметры узлов: power_percent, flow_rate, temperature, water_content, salt_mg_l, level, valve_pos.
+            Режимы узлов: RUNNING (работает), STOPPED (остановлен).
             Ответь СТРОГО в JSON без markdown-обрамления и без пояснений.
-            JSON-схема: {"name":"...","timeoutSec":1800,"difficulty":2,"phases":[{"id":"ph1","title":"...","expectedActions":[{"node":"feed_pump","action":"start","value":null}]}],"hints":[{"key":"ph1","text":"..."}]}
+            JSON-схема: {"name":"...","timeoutSec":1800,"difficulty":2,"initialState":[{"node":"feed_pump","mode":"RUNNING","parameters":{"power_percent":80}}],"phases":[{"id":"ph1","title":"...","expectedActions":[{"node":"feed_pump","action":"start","value":null}]}],"hints":[{"key":"ph1","text":"..."}]}
             В expectedActions используй поля node, action, value (число или null).
+            В initialState укажи узлы, которые уже работают и их параметры на момент начала сценария.
+            Если пользователь задаёт контекст — учти его: начни сценарий с нужной точки, задай initialState.
             Следи за балансом скобок: каждый { должен быть закрыт }, каждая [ закрыта ].
         """.trimIndent()
+
+        val contextBlock = req.context?.takeIf { it.isNotBlank() }?.let {
+            """
+            Контекст пользователя (учти при создании сценария):
+            $it
+            """.trimIndent()
+        } ?: "Контекст не задан — создай сценарий с полного пуска установки (холодный старт)."
 
         val userPrompt = """
             Тема сценария: ${req.topic ?: "Пуск установки"}
             Сложность: ${req.difficulty ?: 2} (от 1 до 3)
             Таймаут: ${req.timeoutSec ?: 1800} секунд
+
+            $contextBlock
+
             Создай 3-4 фазы с 2-3 действиями в каждой.
+            Если контекст требует начала с промежуточной точки — задай initialState с уже работающими узлами и выставленными параметрами, а фазы начни с нужного этапа.
         """.trimIndent()
 
         val result = kotlinx.coroutines.runBlocking { llmChat.chat(systemPrompt, userPrompt, jsonMode = true) }
@@ -523,6 +560,28 @@ class ApiController(
         return ResponseEntity.ok(hint)
     }
 
+    private val actionLabelsRu = mapOf(
+        "start" to "Пуск",
+        "stop" to "Остановка",
+        "set_power" to "Мощность, %",
+        "set_temp" to "Температура, °C",
+        "set_valve" to "Клапан, %",
+    )
+
+    private fun actionLabelRu(actionId: String): String = actionLabelsRu[actionId] ?: actionId
+
+    private val nodeLabelsRu = mapOf(
+        "feed_pump" to "Н-82",
+        "preheater" to "А-19",
+        "dehydrator" to "Э-1",
+        "tank" to "Е-16",
+        "regulator" to "Р-11",
+        "furnace" to "Печь",
+        "output" to "Выход",
+    )
+
+    private fun nodeLabelRu(nodeId: String): String = nodeLabelsRu[nodeId] ?: nodeId
+
     private fun computeContextHint(
         scenario: ru.itcamp.elouav.scenario.model.Scenario,
         userActions: List<AuditRecord>,
@@ -546,11 +605,12 @@ class ApiController(
                     !completedActions.any { (node, action, _) -> node == ea.node && action == ea.action }
                 }
                 if (nextAction != null) {
-                    val nodeName = graph.node(NodeId(nextAction.node))?.name ?: nextAction.node
+                    val nodeName = nodeLabelRu(nextAction.node)
+                    val actionName = actionLabelRu(nextAction.action)
                     val valuePart = nextAction.value?.let { " = $it" } ?: ""
                     val phaseHint = scenario.bankHints.find { it.key == phase.id }?.text ?: ""
                     return mapOf(
-                        "text" to "Следующее действие: $nodeName — ${nextAction.action}$valuePart",
+                        "text" to "Следующее действие: $nodeName - $actionName$valuePart",
                         "phase" to phase.title,
                         "phaseId" to phase.id,
                         "hint" to phaseHint,
@@ -562,6 +622,25 @@ class ApiController(
         }
 
         return mapOf("text" to "Все фазы выполнены. Можно завершать сессию.", "phase" to "Завершение")
+    }
+
+    private fun applyInitialState(graph: Graph, overrides: Map<String, Map<String, Any>>): Graph {
+        var g = graph
+        for ((nodeIdStr, props) in overrides) {
+            val nodeId = NodeId(nodeIdStr)
+            val node = g.node(nodeId) ?: continue
+            val modeStr = (props["mode"] as? String) ?: "RUNNING"
+            val mode = runCatching { NodeMode.valueOf(modeStr) }.getOrDefault(NodeMode.RUNNING)
+            val params = (props["parameters"] as? Map<*, *>)?.entries
+                ?.filter { it.key is String && it.value is Number }
+                ?.associate { it.key as String to (it.value as Number).toDouble() } ?: emptyMap()
+            var newState = node.state.withMode(mode)
+            for ((param, value) in params) {
+                newState = newState.withParameter(param, value)
+            }
+            g = g.updateNode(nodeId, newState)
+        }
+        return g
     }
 
     private fun extractJson(content: String): String {

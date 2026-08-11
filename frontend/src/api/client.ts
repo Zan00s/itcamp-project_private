@@ -57,6 +57,12 @@ export interface GraphDTO {
   edges: EdgeDTO[];
 }
 
+export interface InitialStateNodeDTO {
+  node: string;
+  mode: string;
+  parameters: Record<string, number>;
+}
+
 export interface ScenarioDTO {
   id: string;
   name: string;
@@ -66,6 +72,7 @@ export interface ScenarioDTO {
   phases: PhaseDTO[];
   passingScore: number;
   bankHints?: { key: string; text: string }[];
+  initialState?: InitialStateNodeDTO[];
 }
 
 export interface PhaseDTO {
@@ -220,7 +227,7 @@ export const apiClient = {
     return data;
   },
 
-  async generateScenarioDraft(req: { topic?: string; difficulty?: number; timeoutSec?: number }): Promise<{ scenario?: any; error?: string; rawText?: string }> {
+  async generateScenarioDraft(req: { topic?: string; difficulty?: number; timeoutSec?: number; context?: string }): Promise<{ scenario?: any; error?: string; rawText?: string }> {
     const { data } = await api.post('/ai/scenario-draft', req);
     return data;
   },

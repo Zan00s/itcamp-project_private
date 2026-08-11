@@ -5,7 +5,7 @@ let _userManager: UserManager | null = null;
 function getConfig() {
   const authority = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8180/realms/elouav';
   const redirectUri = import.meta.env.VITE_REDIRECT_URI || window.location.origin + '/callback';
-  const postLogoutUri = import.meta.env.VITE_POST_LOGOUT_URI || window.location.origin + '/login';
+  const postLogoutUri = import.meta.env.VITE_POST_LOGOUT_URI || window.location.origin + '/';
   return {
     authority,
     client_id: 'elouav-frontend',
@@ -35,15 +35,15 @@ export async function logout() {
     if (user?.id_token) {
       await mgr.signoutRedirect({
         id_token_hint: user.id_token,
-        post_logout_redirect_uri: import.meta.env.VITE_POST_LOGOUT_URI || window.location.origin + '/login',
+        post_logout_redirect_uri: import.meta.env.VITE_POST_LOGOUT_URI || window.location.origin + '/',
       });
     } else {
       await mgr.removeUser();
-      window.location.href = '/login';
+      window.location.href = '/';
     }
   } catch {
     try { await mgr.removeUser(); } catch { /* ignore */ }
-    window.location.href = '/login';
+    window.location.href = '/';
   }
 }
 

@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react';
+import { Card } from '@consta/uikit/Card';
+import { Button } from '@consta/uikit/Button';
+import { Badge } from '@consta/uikit/Badge';
+import { Text } from '@consta/uikit/Text';
+import { IconRestart } from '@consta/icons/IconRestart';
 import { apiClient } from '../api/client';
 
 interface ServiceStatus {
@@ -19,7 +24,6 @@ export default function AdminPanel() {
     setChecking(true);
     const results: ServiceStatus[] = [];
 
-    // Backend: try API call (relative URL, goes through nginx proxy)
     try {
       await apiClient.listScenarios();
       results.push({ name: 'Backend API', status: 'OK' });
@@ -28,7 +32,6 @@ export default function AdminPanel() {
       results.push({ name: 'Backend API', status: code ? `${code}` : 'DOWN', detail: e?.message });
     }
 
-    // Backend actuator health (relative URL)
     try {
       const res = await fetch('/actuator/health');
       if (res.ok) {
@@ -41,10 +44,8 @@ export default function AdminPanel() {
       results.push({ name: 'Backend Health', status: 'DOWN' });
     }
 
-    // Frontend: if this page loaded, frontend is up
     results.push({ name: 'Frontend', status: 'OK' });
 
-    // Keycloak: check via backend proxy (avoids CORS)
     try {
       const res = await fetch('/api/health/keycloak');
       if (res.ok) {
@@ -61,54 +62,52 @@ export default function AdminPanel() {
     setChecking(false);
   };
 
-  const statusColor = (s: string) => {
-    if (s === 'OK' || s === 'UP') return '#4caf50';
-    if (s === 'DOWN' || s === 'НЕДОСТУПЕН') return '#f44336';
-    return '#ff9800';
+  const badgeStatus = (s: string): 'success' | 'error' | 'warning' | 'system' => {
+    if (s === 'OK' || s === 'UP') return 'success';
+    if (s === 'DOWN' || s === 'НЕДОСТУПЕН') return 'error';
+    return 'warning';
   };
 
   return (
-    <div>
-      <h2 style={{ marginTop: 0 }}>Админ-панель</h2>
-      <p style={{ color: '#aaa' }}>Состояние сервисов и системный мониторинг</p>
-
-      <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem', marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0 }}>Сервисы</h3>
-          <button onClick={checkServices} disabled={checking} style={btnStyle}>
-            {checking ? 'Проверка...' : 'Обновить'}
-          </button>
-        </div>
-        {services.map((s) => (
-          <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #222' }}>
-            <span>{s.name}</span>
-            <span style={{ color: statusColor(s.status) }}>{s.status}</span>
-          </div>
-        ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <Text as="h2" size="xl" weight="bold" style={{ margin: 0, marginBottom: 4 }}>Админ-панель</Text>
+        <Text as="p" size="m" view="ghost">Состояние сервисов и системный мониторинг</Text>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-        <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem' }}>
-          <h3>Управление</h3>
-          <ul style={{ color: '#aaa', lineHeight: 1.8 }}>
+      <Card col={1} verticalSpace="l" horizontalSpace="l">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <Text as="h3" size="l" weight="semibold">Сервисы</Text>
+          <Button label={checking ? 'Проверка...' : 'Обновить'} size="s" view="ghost" iconLeft={IconRestart} loading={checking} onClick={checkServices} />
+        </div>
+        {services.map((s) => (
+          <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+            <Text size="m">{s.name}</Text>
+            <Badge status={badgeStatus(s.status)} label={s.status} />
+          </div>
+        ))}
+      </Card>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <Card col={1} verticalSpace="l" horizontalSpace="l">
+          <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 8 }}>Управление</Text>
+          <ul style={{ color: '#888', lineHeight: 1.8, paddingLeft: 20, margin: 0 }}>
             <li>Управление пользователями (через Keycloak)</li>
             <li>Управление ролями</li>
             <li>Просмотр всех сессий</li>
             <li>Управление сценариями</li>
             <li>Конфигурация ИИ-модулей</li>
           </ul>
-        </div>
-        <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem' }}>
-          <h3>Ссылки</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <a href="/actuator/health" target="_blank" style={{ color: '#e94560' }}>Проверка backend →</a>
-            <a href="/api/scenarios" target="_blank" style={{ color: '#e94560' }}>API: Сценарии →</a>
-            <a href="/api/graph" target="_blank" style={{ color: '#e94560' }}>API: Граф →</a>
+        </Card>
+        <Card col={1} verticalSpace="l" horizontalSpace="l">
+          <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 8 }}>Ссылки</Text>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <a href="/actuator/health" target="_blank" style={{ color: '#1677ff' }}>Проверка backend →</a>
+            <a href="/api/scenarios" target="_blank" style={{ color: '#1677ff' }}>API: Сценарии →</a>
+            <a href="/api/graph" target="_blank" style={{ color: '#1677ff' }}>API: Граф →</a>
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );
 }
-
-const btnStyle: React.CSSProperties = { padding: '6px 16px', background: '#0f3460', color: '#e94560', border: '1px solid #e94560', borderRadius: '6px', cursor: 'pointer' };

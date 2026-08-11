@@ -1,17 +1,16 @@
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Card } from '@consta/uikit/Card';
+import { Text } from '@consta/uikit/Text';
+import { Badge } from '@consta/uikit/Badge';
+import { Button } from '@consta/uikit/Button';
+import { ProgressLine } from '@consta/uikit/ProgressLine';
+import { SnackBar } from '@consta/uikit/SnackBar';
+import { IconChatStroked } from '@consta/icons/IconChatStroked';
 import type { VerdictDTO } from '../api/client';
 
 const COMPONENT_LABELS: Record<string, string> = {
   correctness: 'Корректность',
   timing: 'Скорость',
-};
-
-const FEEDBACK_LABELS: Record<string, string> = {
-  SEQUENCE_ERROR: 'Ошибка последовательности',
-  OUT_OF_RANGE: 'Выход за пределы',
-  SAFETY_VIOLATION: 'Нарушение безопасности',
-  TIMING: 'Скорость',
-  SEMANTIC: 'Семантическая ошибка',
 };
 
 export default function ResultsScreen() {
@@ -21,123 +20,86 @@ export default function ResultsScreen() {
 
   if (!verdict) {
     return (
-      <div style={{ minHeight: '100vh', background: '#1a1a2e', color: '#eee', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <p>Результаты не найдены</p>
-        <button onClick={() => navigate('/')} style={btnStyle}>На главную</button>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5' }}>
+        <Card verticalSpace="l" horizontalSpace="l" col={1} style={{ textAlign: 'center' }}>
+          <Text as="p" size="m" view="ghost" style={{ marginBottom: 16 }}>Результаты не найдены</Text>
+          <Button label="На главную" view="primary" onClick={() => navigate('/')} />
+        </Card>
       </div>
     );
   }
 
   const isPassed = verdict.verdict === 'PASSED';
-  const scoreColor = isPassed ? '#4caf50' : '#f44336';
+  const isTimeout = verdict.verdict === 'TIMEOUT';
+  const scoreColor = isPassed ? '#52c41a' : isTimeout ? '#faad14' : '#ff4d4f';
+  const titleText = isPassed ? 'СЦЕНАРИЙ ПРОЙДЕН' : isTimeout ? 'ВРЕМЯ ВЫШЛО' : 'СЦЕНАРИЙ НЕ ПРОЙДЕН';
 
   return (
-    <div style={{ minHeight: '100vh', background: '#1a1a2e', color: '#eee', padding: '2rem' }}>
-      <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-        <h1 style={{ textAlign: 'center', marginBottom: '2rem' }}>Результаты</h1>
-
-        {/* Score Card */}
-        <div style={{ background: '#16213e', borderRadius: '12px', padding: '2rem', marginBottom: '2rem', textAlign: 'center' }}>
-          <div style={{
-            fontSize: '4rem',
-            fontWeight: 'bold',
-            color: scoreColor,
-            marginBottom: '0.5rem',
-          }}>
+    <div style={{ minHeight: '100vh', padding: 24, background: '#f0f2f5' }}>
+      <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <Card col={1} verticalSpace="2xl" horizontalSpace="2xl" style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '4rem', fontWeight: 'bold', color: scoreColor, lineHeight: 1 }}>
             {verdict.score}
           </div>
-          <div style={{ fontSize: '1.5rem', color: isPassed ? '#4caf50' : '#f44336' }}>
-            {isPassed ? 'СЦЕНАРИЙ ПРОЙДЕН' : verdict.verdict === 'TIMEOUT' ? 'ВРЕМЯ ВЫШЛО' : 'СЦЕНАРИЙ НЕ ПРОЙДЕН'}
-          </div>
-          <div style={{ color: '#888', marginTop: '0.5rem' }}>
+          <Text as="div" size="xl" weight="bold" style={{ color: scoreColor, marginTop: 8 }}>
+            {titleText}
+          </Text>
+          <Text as="p" size="m" view="ghost" style={{ marginTop: 8 }}>
             Попытка: {verdict.attempt}
-          </div>
+          </Text>
           {verdict.aiUsed && (
-            <div style={{ marginTop: '0.5rem', padding: '4px 12px', background: '#0f3460', borderRadius: '12px', display: 'inline-block', fontSize: '0.8rem' }}>
-              ИИ-оценка использована
+            <div style={{ marginTop: 8 }}>
+              <Badge iconLeft={IconChatStroked} label="ИИ-оценка использована" status="system" />
             </div>
           )}
-        </div>
+        </Card>
 
-        {/* Component Breakdown */}
-        <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem', marginBottom: '2rem' }}>
-          <h3>Разбивка по компонентам</h3>
+        <Card col={1} verticalSpace="l" horizontalSpace="l">
+          <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 16 }}>Разбивка по компонентам</Text>
           {Object.entries(verdict.componentScores)
             .filter(([comp]) => comp === 'correctness' || comp === 'timing')
-            .map(([comp, score]) => (
-            <div key={comp} style={{ marginBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                <span>{COMPONENT_LABELS[comp] || comp}</span>
-                <span>{(score * 100).toFixed(0)}%</span>
-              </div>
-              <div style={{ background: '#0f0f1e', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                <div style={{
-                  width: `${Math.min(score * 100, 100)}%`,
-                  height: '100%',
-                  background: score > 0.7 ? '#4caf50' : score > 0.4 ? '#ff9800' : '#f44336',
-                }} />
-              </div>
-            </div>
-          ))}
-        </div>
+            .map(([comp, score]) => {
+              const pct = Math.round(score * 100);
+              return (
+                <div key={comp} style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text size="m">{COMPONENT_LABELS[comp] || comp}</Text>
+                    <Text size="m" weight="semibold">{pct}%</Text>
+                  </div>
+                  <ProgressLine value={pct} size="m" />
+                </div>
+              );
+            })}
+        </Card>
 
-        {/* Achievements */}
         {verdict.achievements.length > 0 && (
-          <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem', marginBottom: '2rem' }}>
-            <h3>Достижения</h3>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <Card col={1} verticalSpace="l" horizontalSpace="l">
+            <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 12 }}>Достижения</Text>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {verdict.achievements.map((ach, i) => (
-                <span key={i} style={{ padding: '6px 16px', background: '#0f3460', borderRadius: '20px', border: '1px solid #e94560', color: '#e94560' }}>
-                  {ach}
-                </span>
+                <Badge key={i} label={ach} status="normal" view="filled" />
               ))}
             </div>
-          </div>
+          </Card>
         )}
 
-        {/* Feedback */}
         {verdict.feedback.length > 0 && (
-          <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem', marginBottom: '2rem' }}>
-            <h3>Обратная связь</h3>
-            {verdict.feedback.map((fb, i) => (
-              <div key={i} style={{
-                padding: '10px',
-                marginBottom: '8px',
-                background: '#0f0f1e',
-                borderRadius: '6px',
-                borderLeft: `3px solid ${
-                  fb.type === 'SAFETY_VIOLATION' ? '#f44336' :
-                  fb.type === 'SEQUENCE_ERROR' ? '#ff9800' :
-                  fb.type === 'OUT_OF_RANGE' ? '#ff9800' :
-                  '#2196f3'
-                }`,
-              }}>
-                <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '2px' }}>
-                  {FEEDBACK_LABELS[fb.type] || fb.type.replace(/_/g, ' ')}
-                </div>
-                <div>{fb.text}</div>
-                {fb.hint && <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: '4px' }}>💡 {fb.hint}</div>}
-              </div>
-            ))}
-          </div>
+          <Card col={1} verticalSpace="l" horizontalSpace="l">
+            <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 12 }}>Обратная связь</Text>
+            <SnackBar items={verdict.feedback.map((fb, i) => ({
+              key: String(i),
+              message: fb.text,
+              status: fb.type === 'SAFETY_VIOLATION' ? 'error' :
+                      fb.type === 'SEQUENCE_ERROR' || fb.type === 'OUT_OF_RANGE' ? 'warning' :
+                      'info',
+            }))} />
+          </Card>
         )}
 
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-          <button onClick={() => navigate('/')} style={{ ...btnStyle, background: '#0f3460', border: '2px solid #e94560', color: '#e94560', fontSize: '1.1rem', padding: '12px 32px' }}>
-            Новый сценарий
-          </button>
+        <div style={{ textAlign: 'center' }}>
+          <Button label="Новый сценарий" size="l" view="primary" onClick={() => navigate('/')} />
         </div>
       </div>
     </div>
   );
 }
-
-const btnStyle: React.CSSProperties = {
-  padding: '8px 20px',
-  background: '#16213e',
-  color: '#eee',
-  border: '1px solid #333',
-  borderRadius: '6px',
-  cursor: 'pointer',
-};

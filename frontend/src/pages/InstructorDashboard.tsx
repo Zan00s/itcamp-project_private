@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { Card } from '@consta/uikit/Card';
+import { Text } from '@consta/uikit/Text';
+import { Button } from '@consta/uikit/Button';
+import { Badge } from '@consta/uikit/Badge';
+import { Table, TableColumn } from '@consta/uikit/Table';
+import { IconRestart } from '@consta/icons/IconRestart';
+import { IconDownload } from '@consta/icons/IconDownload';
+import { IconChatStroked } from '@consta/icons/IconChatStroked';
 import { apiClient, type SessionInfoDTO } from '../api/client';
 
 const SCENARIO_NAMES: Record<string, string> = {
   startup: 'Пуск установки',
   shutdown: 'Остановка установки',
   emergency_pump_failure: 'Нештатная ситуация: отказ насоса',
-};
-
-const VERDICT_COLORS: Record<string, string> = {
-  PASSED: '#4caf50',
-  FAILED: '#f44336',
-  TIMEOUT: '#ff9800',
 };
 
 const VERDICT_LABELS: Record<string, string> = {
@@ -29,7 +31,7 @@ type SortField = 'userId' | 'scenarioId' | 'attempt' | 'score' | 'verdict' | 'st
 type SortDir = 'asc' | 'desc';
 
 function formatDuration(sec: number): string {
-  if (sec <= 0) return '—';
+  if (sec <= 0) return '-';
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
@@ -47,12 +49,10 @@ function exportXlsx(rows: SessionInfoDTO[]) {
     'Статус': s.active ? 'Активна' : 'Завершена',
     'Продолжительность': formatDuration(s.durationSec),
   }));
-
   const ws = XLSX.utils.json_to_sheet(data, {
     header: ['Студент', 'Сценарий', 'Попытка', 'Балл', 'Результат', 'Статус', 'Продолжительность'],
   });
   ws['!cols'] = [{ wch: 20 }, { wch: 28 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 28 }];
-
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Сессии');
   XLSX.writeFile(wb, 'sessions.xlsx');
@@ -62,11 +62,8 @@ export default function InstructorDashboard() {
   const [sessions, setSessions] = useState<SessionInfoDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<SessionInfoDTO | null>(null);
-  const [filters, setFilters] = useState<Record<SortField, string>>({
-    userId: '', scenarioId: '', attempt: '', score: '', verdict: '', status: '', duration: '',
-  });
-  const [sortField, setSortField] = useState<SortField>('userId');
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [sortField] = useState<SortField>('userId');
+  const [sortDir] = useState<SortDir>('asc');
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -88,18 +85,7 @@ export default function InstructorDashboard() {
   const getVerdict = (s: SessionInfoDTO) => s.verdict?.verdict || '';
   const getStatus = (s: SessionInfoDTO) => s.active ? 'active' : 'done';
 
-  const filtered = sessions.filter(s => {
-    if (filters.userId && !s.userId.toLowerCase().includes(filters.userId.toLowerCase())) return false;
-    if (filters.scenarioId && !(SCENARIO_NAMES[s.scenarioId] || s.scenarioId).toLowerCase().includes(filters.scenarioId.toLowerCase())) return false;
-    if (filters.attempt && !String(s.attempt).includes(filters.attempt)) return false;
-    if (filters.score && String(s.verdict?.score ?? '').includes(filters.score)) return false;
-    if (filters.verdict && !getVerdict(s).toLowerCase().includes(filters.verdict.toLowerCase())) return false;
-    if (filters.status && !getStatus(s).toLowerCase().includes(filters.status.toLowerCase())) return false;
-    if (filters.duration && !formatDuration(s.durationSec).toLowerCase().includes(filters.duration.toLowerCase())) return false;
-    return true;
-  });
-
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = [...sessions].sort((a, b) => {
     let cmp = 0;
     switch (sortField) {
       case 'userId': cmp = a.userId.localeCompare(b.userId); break;
@@ -112,15 +98,6 @@ export default function InstructorDashboard() {
     }
     return sortDir === 'asc' ? cmp : -cmp;
   });
-
-  const toggleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir('asc');
-    }
-  };
 
   const completed = sessions.filter(s => s.verdict);
   const active = sessions.filter(s => s.active && !s.verdict);
@@ -137,188 +114,201 @@ export default function InstructorDashboard() {
     setAiLoading(false);
   };
 
-  const sortArrow = (field: SortField) => sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+  const columns: TableColumn<SessionInfoDTO>[] = [
+    {
+      title: 'Студент',
+      accessor: 'userId',
+      align: 'left',
+      renderCell: (row) => <Text size="m">{row.userId}</Text>,
+    },
+    {
+      title: 'Сценарий',
+      accessor: 'scenarioId',
+      align: 'left',
+      renderCell: (row) => <Text size="m">{SCENARIO_NAMES[row.scenarioId] || row.scenarioId}</Text>,
+    },
+    {
+      title: 'Попытка',
+      accessor: 'attempt',
+      align: 'center',
+      renderCell: (row) => <Text size="m">#{row.attempt}</Text>,
+    },
+    {
+      title: 'Балл',
+      accessor: 'id',
+      align: 'center',
+      renderCell: (row) => row.verdict ? (
+        <Text size="m" weight="bold" style={{ color: row.verdict.verdict === 'PASSED' ? '#52c41a' : row.verdict.verdict === 'TIMEOUT' ? '#faad14' : '#ff4d4f' }}>
+          {row.verdict.score}
+        </Text>
+      ) : <Text view="ghost">-</Text>,
+    },
+    {
+      title: 'Результат',
+      accessor: 'active',
+      align: 'center',
+      renderCell: (row) => row.verdict ? (
+        <Badge
+          status={row.verdict.verdict === 'PASSED' ? 'success' : row.verdict.verdict === 'TIMEOUT' ? 'warning' : 'error'}
+          label={VERDICT_LABELS[row.verdict.verdict] || row.verdict.verdict}
+        />
+      ) : <Text view="ghost">-</Text>,
+    },
+    {
+      title: 'Статус',
+      accessor: 'startedAt',
+      align: 'center',
+      renderCell: (row) => (
+        <Badge status={row.active ? 'warning' : 'system'} label={row.active ? 'Активна' : 'Завершена'} />
+      ),
+    },
+    {
+      title: 'Время',
+      accessor: 'durationSec',
+      align: 'left',
+      renderCell: (row) => <Text size="s">{formatDuration(row.durationSec)}</Text>,
+    },
+  ];
 
   return (
-    <div>
-      <h2 style={{ marginTop: 0 }}>Панель преподавателя</h2>
-      <p style={{ color: '#aaa' }}>Мониторинг сессий и результатов студентов</p>
-
-      {error && <div style={errorStyle}>{error}</div>}
-
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div style={statCard}>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fff' }}>{sessions.length}</div>
-          <div style={{ color: '#888', fontSize: '0.85rem' }}>Всего сессий</div>
-        </div>
-        <div style={statCard}>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#ff9800' }}>{active.length}</div>
-          <div style={{ color: '#888', fontSize: '0.85rem' }}>Активных</div>
-        </div>
-        <div style={statCard}>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#4caf50' }}>{completed.filter(s => s.verdict?.verdict === 'PASSED').length}</div>
-          <div style={{ color: '#888', fontSize: '0.85rem' }}>Пройдено</div>
-        </div>
-        <div style={statCard}>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#f44336' }}>{completed.filter(s => s.verdict?.verdict === 'FAILED').length}</div>
-          <div style={{ color: '#888', fontSize: '0.85rem' }}>Не пройдено</div>
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <Text as="h2" size="xl" weight="bold" style={{ margin: 0, marginBottom: 4 }}>Панель преподавателя</Text>
+        <Text as="p" size="m" view="ghost">Мониторинг сессий и результатов студентов</Text>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem' }}>
-        <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h3 style={{ margin: 0 }}>Результаты сессий</h3>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => exportXlsx(sorted)} style={btnStyle}>Выгрузить XLSX</button>
-              <button onClick={refresh} style={btnStyle}>Обновить</button>
+      {error && (
+        <Card verticalSpace="s" horizontalSpace="m" style={{ background: '#fff1f0', borderColor: '#ffa39e' }}>
+          <Text view="alert">{error}</Text>
+        </Card>
+      )}
+
+      <div style={{ display: 'flex', gap: 16 }}>
+        <Card verticalSpace="m" horizontalSpace="l" style={{ flex: 1, textAlign: 'center' }}>
+          <Text size="2xl" weight="bold">{sessions.length}</Text>
+          <Text as="div" size="s" view="ghost">Всего сессий</Text>
+        </Card>
+        <Card verticalSpace="m" horizontalSpace="l" style={{ flex: 1, textAlign: 'center' }}>
+          <Text size="2xl" weight="bold" style={{ color: '#faad14' }}>{active.length}</Text>
+          <Text as="div" size="s" view="ghost">Активных</Text>
+        </Card>
+        <Card verticalSpace="m" horizontalSpace="l" style={{ flex: 1, textAlign: 'center' }}>
+          <Text size="2xl" weight="bold" style={{ color: '#52c41a' }}>{completed.filter(s => s.verdict?.verdict === 'PASSED').length}</Text>
+          <Text as="div" size="s" view="ghost">Пройдено</Text>
+        </Card>
+        <Card verticalSpace="m" horizontalSpace="l" style={{ flex: 1, textAlign: 'center' }}>
+          <Text size="2xl" weight="bold" style={{ color: '#ff4d4f' }}>{completed.filter(s => s.verdict?.verdict === 'FAILED').length}</Text>
+          <Text as="div" size="s" view="ghost">Не пройдено</Text>
+        </Card>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        <Card col={1} verticalSpace="l" horizontalSpace="l">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text as="h3" size="l" weight="semibold">Результаты сессий</Text>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button label="Выгрузить XLSX" size="s" view="secondary" iconLeft={IconDownload} onClick={() => exportXlsx(sorted)} />
+              <Button label="Обновить" size="s" view="ghost" iconLeft={IconRestart} onClick={refresh} />
             </div>
           </div>
-
-          {sessions.length === 0 && (
-            <p style={{ color: '#666', textAlign: 'center', padding: '2rem' }}>Нет завершённых сессий. Студенты ещё не проходили сценарии.</p>
+          {sessions.length === 0 ? (
+            <Text as="p" size="m" view="ghost" style={{ textAlign: 'center', padding: 32 }}>
+              Нет завершённых сессий. Студенты ещё не проходили сценарии.
+            </Text>
+          ) : (
+            <Table
+              columns={columns as any}
+              rows={sorted as any}
+              onRowClick={({ id }: { id: string; e: React.MouseEvent }) => {
+                const row = sorted.find(s => s.id === id);
+                if (row) setSelected(row);
+              }}
+              zebraStriped="odd"
+              borderBetweenRows
+              borderBetweenColumns
+            />
           )}
+        </Card>
 
-          {sessions.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #333' }}>
-                  <th style={th} onClick={() => toggleSort('userId')}>Студент{sortArrow('userId')}</th>
-                  <th style={th} onClick={() => toggleSort('scenarioId')}>Сценарий{sortArrow('scenarioId')}</th>
-                  <th style={th} onClick={() => toggleSort('attempt')}>Попытка{sortArrow('attempt')}</th>
-                  <th style={th} onClick={() => toggleSort('score')}>Балл{sortArrow('score')}</th>
-                  <th style={th} onClick={() => toggleSort('verdict')}>Результат{sortArrow('verdict')}</th>
-                  <th style={th} onClick={() => toggleSort('status')}>Статус{sortArrow('status')}</th>
-                  <th style={th} onClick={() => toggleSort('duration')}>Продолжительность{sortArrow('duration')}</th>
-                </tr>
-                <tr>
-                  <th style={th}><input value={filters.userId} onChange={e => setFilters({ ...filters, userId: e.target.value })} style={filterInput} placeholder="фильтр" /></th>
-                  <th style={th}><input value={filters.scenarioId} onChange={e => setFilters({ ...filters, scenarioId: e.target.value })} style={filterInput} placeholder="фильтр" /></th>
-                  <th style={th}><input value={filters.attempt} onChange={e => setFilters({ ...filters, attempt: e.target.value })} style={filterInput} placeholder="фильтр" /></th>
-                  <th style={th}><input value={filters.score} onChange={e => setFilters({ ...filters, score: e.target.value })} style={filterInput} placeholder="фильтр" /></th>
-                  <th style={th}><input value={filters.verdict} onChange={e => setFilters({ ...filters, verdict: e.target.value })} style={filterInput} placeholder="фильтр" /></th>
-                  <th style={th}><input value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })} style={filterInput} placeholder="фильтр" /></th>
-                  <th style={th}><input value={filters.duration} onChange={e => setFilters({ ...filters, duration: e.target.value })} style={filterInput} placeholder="фильтр" /></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((s) => (
-                  <tr
-                    key={s.id}
-                    onClick={() => setSelected(s)}
-                    style={{
-                      borderBottom: '1px solid #222',
-                      cursor: 'pointer',
-                      background: selected?.id === s.id ? '#0f3460' : 'transparent',
-                    }}
-                  >
-                    <td style={td}>{s.userId}</td>
-                    <td style={td}>{SCENARIO_NAMES[s.scenarioId] || s.scenarioId}</td>
-                    <td style={td}>#{s.attempt}</td>
-                    <td style={td}>{s.verdict ? <strong style={{ color: VERDICT_COLORS[s.verdict.verdict] }}>{s.verdict.score}</strong> : '—'}</td>
-                    <td style={td}>
-                      {s.verdict ? (
-                        <span style={{ color: VERDICT_COLORS[s.verdict.verdict] }}>
-                          {VERDICT_LABELS[s.verdict.verdict] || s.verdict.verdict}
-                        </span>
-                      ) : '—'}
-                    </td>
-                    <td style={td}>
-                      <span style={{ color: s.active ? '#ff9800' : '#888' }}>
-                        {s.active ? 'Активна' : 'Завершена'}
-                      </span>
-                    </td>
-                    <td style={td}>{formatDuration(s.durationSec)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div style={{ background: '#16213e', borderRadius: '12px', padding: '1.5rem' }}>
-          <h3 style={{ margin: '0 0 1rem' }}>Детали</h3>
-          {!selected && <p style={{ color: '#666' }}>Выберите сессию из таблицы</p>}
+        <Card col={1} verticalSpace="l" horizontalSpace="l">
+          <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 12 }}>Детали</Text>
+          {!selected && <Text as="p" size="m" view="ghost">Выберите сессию из таблицы</Text>}
           {selected && (
-            <>
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ color: '#888', fontSize: '0.85rem' }}>Студент</div>
-                <div style={{ fontWeight: 'bold' }}>{selected.userId}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <Text size="s" view="ghost">Студент</Text>
+                <Text size="m" weight="semibold">{selected.userId}</Text>
               </div>
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ color: '#888', fontSize: '0.85rem' }}>Сценарий</div>
-                <div>{SCENARIO_NAMES[selected.scenarioId] || selected.scenarioId}</div>
+              <div>
+                <Text size="s" view="ghost">Сценарий</Text>
+                <Text size="m">{SCENARIO_NAMES[selected.scenarioId] || selected.scenarioId}</Text>
               </div>
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ color: '#888', fontSize: '0.85rem' }}>Попытка</div>
-                <div>#{selected.attempt}</div>
+              <div>
+                <Text size="s" view="ghost">Попытка</Text>
+                <Text size="m">#{selected.attempt}</Text>
               </div>
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ color: '#888', fontSize: '0.85rem' }}>Продолжительность</div>
-                <div>{formatDuration(selected.durationSec)}</div>
+              <div>
+                <Text size="s" view="ghost">Продолжительность</Text>
+                <Text size="m">{formatDuration(selected.durationSec)}</Text>
               </div>
               {selected.verdict && (
                 <>
-                  <div style={{ marginBottom: '1rem' }}>
-                    <div style={{ color: '#888', fontSize: '0.85rem' }}>Балл</div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: VERDICT_COLORS[selected.verdict.verdict] }}>
+                  <div>
+                    <Text size="s" view="ghost">Балл</Text>
+                    <Text size="xl" weight="bold" style={{ color: selected.verdict.verdict === 'PASSED' ? '#52c41a' : selected.verdict.verdict === 'TIMEOUT' ? '#faad14' : '#ff4d4f' }}>
                       {selected.verdict.score} / 100
-                    </div>
+                    </Text>
                   </div>
-                  <div style={{ marginBottom: '1rem' }}>
-                    <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: '4px' }}>Показатели</div>
+                  <div>
+                    <Text size="s" view="ghost" style={{ marginBottom: 4 }}>Показатели</Text>
                     {(['correctness', 'timing'] as const).map(k => {
                       const v = selected.verdict!.componentScores[k];
                       if (v === undefined) return null;
                       return (
-                        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                          <span>{COMPONENT_LABELS[k] || k}:</span>
-                          <span>{(v * 100).toFixed(0)}%</span>
+                        <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <Text size="s">{COMPONENT_LABELS[k] || k}:</Text>
+                          <Text size="s" weight="semibold">{(v * 100).toFixed(0)}%</Text>
                         </div>
                       );
                     })}
                   </div>
                   {selected.verdict.feedback.length > 0 && (
-                    <div style={{ marginBottom: '1rem' }}>
-                      <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: '4px' }}>Обратная связь</div>
+                    <div>
+                      <Text size="s" view="ghost" style={{ marginBottom: 4 }}>Обратная связь</Text>
                       {selected.verdict.feedback.map((f, i) => (
-                        <div key={i} style={{ fontSize: '0.8rem', padding: '4px 8px', background: '#0f0f1e', borderRadius: '4px', marginBottom: '4px' }}>
-                          {f.text}
+                        <div key={i} style={{ padding: 8, background: '#f5f5f5', borderRadius: 4, marginBottom: 4 }}>
+                          <Text size="s">{f.text}</Text>
                         </div>
                       ))}
                     </div>
                   )}
-                  <button
+                  <Button
+                    label={aiLoading ? 'МадИИна анализирует...' : '🤖 МадИИна-разбор результатов'}
+                    size="s"
+                    view="primary"
+                    iconLeft={IconChatStroked}
+                    width="full"
+                    loading={aiLoading}
                     onClick={fetchAiAnalysis}
-                    disabled={aiLoading}
-                    style={{ ...btnStyle, width: '100%', background: '#4a148c', border: '1px solid #b39ddb', color: '#b39ddb' }}
-                  >
-                    {aiLoading ? 'МадИИна анализирует...' : '🤖 МадИИна-разбор результатов'}
-                  </button>
+                  />
                   {aiAnalysis && (
-                    <div style={{ marginTop: '8px', padding: '8px', background: '#2d1b4e', borderRadius: '6px', border: '1px solid #b39ddb' }}>
-                      <div style={{ color: '#b39ddb', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>🤖 МадИИна-анализ</div>
-                      <div style={{ color: '#aaa', fontSize: '0.85rem' }}>{aiAnalysis}</div>
-                      <button onClick={() => setAiAnalysis(null)} style={{ ...btnStyle, padding: '2px 8px', fontSize: '0.75rem', marginTop: '4px' }}>Закрыть</button>
-                    </div>
+                    <Card verticalSpace="s" horizontalSpace="m" style={{ background: '#f9f0ff', borderColor: '#d3adf3' }}>
+                      <Text size="s" weight="semibold" style={{ color: '#722ed1', marginBottom: 4 }}>🤖 МадИИна-анализ</Text>
+                      <Text size="s" view="ghost">{aiAnalysis}</Text>
+                      <Button label="Закрыть" size="xs" view="ghost" style={{ marginTop: 4 }} onClick={() => setAiAnalysis(null)} />
+                    </Card>
                   )}
                 </>
               )}
               {!selected.verdict && (
-                <div style={{ padding: '12px', background: '#0f0f1e', borderRadius: '8px', color: '#ff9800' }}>
-                  Сессия ещё не завершена
-                </div>
+                <Card verticalSpace="s" horizontalSpace="m" style={{ background: '#fffbe6', borderColor: '#ffe58f' }}>
+                  <Text size="s" style={{ color: '#faad14' }}>Сессия ещё не завершена</Text>
+                </Card>
               )}
-            </>
+            </div>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   );
 }
-
-const th: React.CSSProperties = { textAlign: 'left', padding: '6px', color: '#888', fontSize: '0.85rem', cursor: 'pointer' };const td: React.CSSProperties = { padding: '8px', fontSize: '0.9rem' };
-const filterInput: React.CSSProperties = { width: '100%', padding: '3px 6px', background: '#0f0f1e', border: '1px solid #333', borderRadius: '3px', color: '#eee', fontSize: '0.8rem', boxSizing: 'border-box' };
-const btnStyle: React.CSSProperties = { padding: '6px 16px', background: '#0f3460', color: '#e94560', border: '1px solid #e94560', borderRadius: '6px', cursor: 'pointer' };
-const statCard: React.CSSProperties = { background: '#16213e', borderRadius: '12px', padding: '1rem 1.5rem', textAlign: 'center', flex: 1 };
-const errorStyle: React.CSSProperties = { background: '#f44336', color: '#fff', padding: '10px 20px', borderRadius: '8px', marginBottom: '1rem' };

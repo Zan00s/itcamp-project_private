@@ -1,6 +1,18 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Card } from '@consta/uikit/Card';
+import { Text } from '@consta/uikit/Text';
+import { Button } from '@consta/uikit/Button';
+import { TextField } from '@consta/uikit/TextField';
+import { Modal } from '@consta/uikit/Modal';
+import { IconExit } from '@consta/icons/IconExit';
+import { IconLightningBolt } from '@consta/icons/IconLightningBolt';
+import { IconInfo } from '@consta/icons/IconInfo';
+import { IconChatStroked } from '@consta/icons/IconChatStroked';
+import { IconCollapse } from '@consta/icons/IconCollapse';
+import { IconExpand } from '@consta/icons/IconExpand';
 import { useSimStore } from '../store/simStore';
+import { useThemeMode } from '../theme/ThemeContext';
 import { apiClient, type VerdictDTO } from '../api/client';
 
 const MODE_COLORS: Record<string, string> = {
@@ -75,60 +87,90 @@ function paramLabel(key: string): string {
   return PARAM_LABELS[key] || key;
 }
 
-const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
-  feed_pump: { x: 100, y: 90 },
-  preheater: { x: 370, y: 110 },
-  dehydrator: { x: 680, y: 85 },
-  output: { x: 970, y: 95 },
-  tank: { x: 710, y: 260 },
-  regulator: { x: 420, y: 275 },
-  furnace: { x: 380, y: 370 },
-};
+function formatTime(sec: number): string {
+  if (sec <= 0) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
 
 export default function OperatorScreen() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
-  const { graph, currentScenario, journal, loading, error, loadGraph, selectScenario, applyAction } = useSimStore();
+  const { mode } = useThemeMode();
+  const { graph, currentScenario, journal, loading, error, selectScenario, applyAction } = useSimStore();
+  const sessionMode = useSimStore(s => s.mode);
+  const isExam = sessionMode === 'exam';
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [actionValue, setActionValue] = useState<string>('');
   const [verdict, setVerdict] = useState<VerdictDTO | null>(null);
   const journalRef = useRef<HTMLDivElement>(null);
-  const [showHint, setShowHint] = useState<string | null>(null);
+  const [showHint, setShowHint] = useState(false);
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set());
   const [contextHint, setContextHint] = useState<string | null>(null);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [journalCollapsed, setJournalCollapsed] = useState(false);
+  const [remainingSec, setRemainingSec] = useState<number>(0);
+  const endedRef = useRef(false);
 
   useEffect(() => {
     if (sessionId) {
-      apiClient.getSession(sessionId).then((s) => {
+      apiClient.getSession(sessionId).then(async (s) => {
         selectScenario(s.scenarioId);
+        const g = await apiClient.getSessionState(sessionId);
+        useSimStore.setState({ graph: g });
       });
-      loadGraph();
     }
   }, [sessionId]);
 
   useEffect(() => {
-    if (journalRef.current) {
-      journalRef.current.scrollTop = journalRef.current.scrollHeight;
-    }
+    if (journalRef.current) journalRef.current.scrollTop = journalRef.current.scrollHeight;
   }, [journal]);
+
+  useEffect(() => {
+    if (!sessionId || !currentScenario) return;
+    setRemainingSec(currentScenario.timeoutSec);
+    const interval = setInterval(() => {
+      setRemainingSec(prev => {
+        const next = prev - 1;
+        if (next <= 0) {
+          clearInterval(interval);
+          if (!endedRef.current) {
+            endedRef.current = true;
+            apiClient.endSession(sessionId).then(v => setVerdict(v)).catch(() => navigate('/'));
+          }
+          return 0;
+        }
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sessionId, currentScenario]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const handleBeforeUnload = () => {
+      if (endedRef.current) return;
+      endedRef.current = true;
+      const url = `${import.meta.env.VITE_API_BASE || '/api'}/sessions/${sessionId}/end`;
+      navigator.sendBeacon(url);
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [sessionId]);
 
   const handleAction = async (nodeId: string, actionId: string) => {
     const node = graph?.nodes.find((n) => n.id === nodeId);
     const action = node?.actions.find((a) => a.id === actionId);
     if (action?.param && action.min !== null && action.max !== null) {
       const val = parseFloat(actionValue);
-      if (isNaN(val)) {
-        alert(`Введите значение от ${action.min} до ${action.max}`);
-        return;
-      }
+      if (isNaN(val)) { alert(`Введите значение от ${action.min} до ${action.max}`); return; }
       await applyAction(nodeId, actionId, val);
     } else {
       await applyAction(nodeId, actionId);
     }
     setActionValue('');
-
     const latest = useSimStore.getState().journal;
     if (latest.length > 0) {
       const lastEntry = latest[latest.length - 1];
@@ -141,39 +183,25 @@ export default function OperatorScreen() {
 
   const handleEnd = async () => {
     if (!sessionId) return;
-    try {
-      const v = await apiClient.endSession(sessionId);
-      setVerdict(v);
-    } catch (e: any) {
-      console.error(e);
-    }
+    endedRef.current = true;
+    try { const v = await apiClient.endSession(sessionId); setVerdict(v); }
+    catch (e: any) { console.error(e); }
   };
 
   const fetchContextHint = async () => {
-    if (!sessionId) return;
-    try {
-      const res = await apiClient.getContextHint(sessionId);
-      setContextHint(res.text);
-    } catch {
-      setContextHint('Не удалось получить подсказку');
-    }
+    if (!sessionId || isExam) return;
+    try { const res = await apiClient.getContextHint(sessionId); setContextHint(res.text); }
+    catch { setContextHint('Не удалось получить подсказку'); }
   };
 
   const fetchAiExplanation = async () => {
-    if (!sessionId || journal.length === 0) return;
+    if (!sessionId || journal.length === 0 || isExam) return;
     const lastEntry = journal[journal.length - 1];
     setAiLoading(true);
     try {
-      const res = await apiClient.explainAction({
-        node: lastEntry.node,
-        action: actionLabel(lastEntry.action),
-        value: lastEntry.value ?? undefined,
-        chain: lastEntry.chain,
-      });
+      const res = await apiClient.explainAction({ node: lastEntry.node, action: actionLabel(lastEntry.action), value: lastEntry.value ?? undefined, chain: lastEntry.chain });
       setAiExplanation(res.text);
-    } catch {
-      setAiExplanation('МадИИна недоступна');
-    }
+    } catch { setAiExplanation('МадИИна недоступна'); }
     setAiLoading(false);
   };
 
@@ -183,482 +211,443 @@ export default function OperatorScreen() {
   }
 
   const selectedNodeData = graph?.nodes.find((n) => n.id === selectedNode);
+  const timeColor = remainingSec < 60 ? '#ff4d4f' : remainingSec < 300 ? '#faad14' : isExam ? '#ff4d4f' : '#52c41a';
 
   return (
-    <div style={{ minHeight: '100vh', background: '#1a1a2e', color: '#eee', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <div style={{ padding: '0.75rem 2rem', background: '#16213e', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333' }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: '1.2rem' }}>КТК ЭЛОУ-АВТ — Оператор</h2>
-          {currentScenario && <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{currentScenario.name}</span>}
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', display: 'flex', flexDirection: 'column' }}>
+      <Card verticalSpace="s" horizontalSpace="xl" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div>
+            <Text as="h2" size="l" weight="bold" style={{ margin: 0 }}>КТК ЭЛОУ-АВТ - Оператор</Text>
+            {currentScenario && <Text as="span" size="s" view="ghost"> {currentScenario.name}</Text>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px', borderRadius: 4, background: isExam ? '#fff1f0' : '#f6ffed', border: `1px solid ${isExam ? '#ffa39e' : '#b7eb8f'}` }}>
+            <Text size="s" weight="bold" style={{ color: isExam ? '#ff4d4f' : '#52c41a' }}>
+              {isExam ? 'ЭКЗАМЕН' : 'ТРЕНИРОВКА'}
+            </Text>
+            <Text size="m" weight="bold" style={{ color: timeColor, fontFamily: 'monospace', minWidth: 60 }}>
+              {formatTime(remainingSec)}
+            </Text>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: '1rem' }}>
-          <button onClick={fetchContextHint} style={btnStyle}>Контекстная подсказка</button>
-          <button onClick={() => setShowHint(showHint === 'hints' ? null : 'hints')} style={btnStyle}>Подсказки по фазам</button>
-          <button onClick={handleEnd} style={{ ...btnStyle, background: '#f44336', color: '#fff' }}>Завершить</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {!isExam && (
+            <>
+              <Button label="Контекстная подсказка" size="s" view="ghost" iconLeft={IconLightningBolt} onClick={fetchContextHint} />
+              <Button label="Подсказки по фазам" size="s" view="ghost" iconLeft={IconInfo} onClick={() => setShowHint(!showHint)} />
+            </>
+          )}
+          <Button label="Завершить" size="s" view="primary" iconLeft={IconExit} onClick={handleEnd} />
         </div>
-      </div>
+      </Card>
 
-      {error && <div style={{ background: '#f44336', padding: '8px 2rem', color: '#fff' }}>{error}</div>}
-      {contextHint && (
-        <div style={{ background: '#0f3460', padding: '10px 2rem', color: '#e94560', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>💡 {contextHint}</span>
-          <button onClick={() => setContextHint(null)} style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer' }}>×</button>
-        </div>
+      {error && (
+        <Card verticalSpace="s" horizontalSpace="xl" style={{ borderRadius: 0, background: '#fff1f0', borderColor: '#ffa39e' }}>
+          <Text view="alert">{error}</Text>
+        </Card>
       )}
-      {aiExplanation && (
-        <div style={{ background: '#2d1b4e', padding: '10px 2rem', color: '#b39ddb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>🤖 МадИИна: {aiExplanation}</span>
-          <button onClick={() => setAiExplanation(null)} style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer' }}>×</button>
-        </div>
+      {!isExam && contextHint && (
+        <Card verticalSpace="s" horizontalSpace="xl" style={{ borderRadius: 0, background: '#e6f7ff', borderColor: '#91d5ff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text size="m">💡 {contextHint}</Text>
+          <Button label="" size="xs" view="ghost" onClick={() => setContextHint(null)} />
+        </Card>
+      )}
+      {!isExam && aiExplanation && (
+        <Card verticalSpace="s" horizontalSpace="xl" style={{ borderRadius: 0, background: '#f9f0ff', borderColor: '#d3adf3', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text size="m" style={{ color: '#722ed1' }}>🤖 МадИИна: {aiExplanation}</Text>
+          <Button label="" size="xs" view="ghost" onClick={() => setAiExplanation(null)} />
+        </Card>
       )}
 
-      {/* Main content: P&ID + Actions + Journal */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* P&ID Diagram */}
-        <div style={{ flex: 2, padding: '1rem', overflow: 'auto', position: 'relative' }}>
+        <div style={{ flex: 1, padding: 16, overflow: 'auto' }}>
           {currentScenario && (
-            <div style={{ marginBottom: '0.5rem', padding: '8px 12px', background: '#0f3460', borderRadius: '8px', border: '1px solid #e94560' }}>
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ color: '#e94560', fontWeight: 'bold' }}>Фазы:</span>
+            <Card verticalSpace="s" horizontalSpace="m" style={{ marginBottom: 8, background: '#e6f7ff', borderColor: '#91d5ff' }}>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Text size="s" weight="bold" style={{ color: '#1677ff' }}>Фазы:</Text>
                 {currentScenario.phases.map((ph, i) => (
-                  <span key={ph.id} style={{ color: '#aaa', fontSize: '0.85rem' }}>
-                    {i + 1}. {ph.title}
-                  </span>
+                  <Text key={ph.id} size="s" view="ghost">{i + 1}. {ph.title}</Text>
                 ))}
               </div>
-            </div>
+            </Card>
           )}
-          <div style={{ overflowX: 'auto', paddingBottom: '8px' }}>
-            <Mnemoscheme graph={graph} selectedNode={selectedNode} highlightedNodes={highlightedNodes} onSelect={setSelectedNode} />
+          <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
+            <Mnemoscheme graph={graph} selectedNode={selectedNode} highlightedNodes={highlightedNodes} onSelect={setSelectedNode} dark={mode === 'dark'} />
           </div>
         </div>
 
-        {/* Actions Panel */}
-        <div style={{ width: '300px', background: '#16213e', padding: '1rem', overflow: 'auto', borderLeft: '1px solid #333' }}>
-          <h3 style={{ marginTop: 0 }}>Действия</h3>
-          {!selectedNodeData && <p style={{ color: '#888' }}>Выберите узел на схеме</p>}
+        <Card verticalSpace="l" horizontalSpace="l" style={{ width: 280, borderRadius: 0, borderLeft: '1px solid #e8e8e8', overflow: 'auto' }}>
+          <Text as="h3" size="l" weight="semibold" style={{ marginTop: 0 }}>Действия</Text>
+          {!selectedNodeData && <Text as="p" size="m" view="ghost">Выберите узел на схеме</Text>}
           {selectedNodeData && (
-            <>
-              <div style={{ marginBottom: '1rem' }}>
-                <strong>{selectedNodeData.name}</strong>
-                <div style={{ fontSize: '0.85rem', color: '#aaa' }}>
-                  Тип: {TYPE_LABELS[selectedNodeData.type] || selectedNodeData.type} | Режим: {MODE_LABELS[selectedNodeData.mode] || selectedNodeData.mode}
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <Text size="m" weight="semibold">{NODE_LABELS[selectedNodeData.id] || selectedNodeData.name}</Text>
+                <Text size="s" view="ghost">Тип: {TYPE_LABELS[selectedNodeData.type] || selectedNodeData.type} | Режим: {MODE_LABELS[selectedNodeData.mode] || selectedNodeData.mode}</Text>
               </div>
-              <div style={{ marginBottom: '0.75rem', padding: '8px', background: '#0f0f1e', borderRadius: '6px' }}>
+              <Card verticalSpace="s" horizontalSpace="m" style={{ background: '#f5f5f5' }}>
                 {Object.entries(selectedNodeData.parameters).map(([k, v]) => (
-                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                    <span style={{ color: '#888' }}>{selectedNodeData.paramLabels?.[k] || k}:</span>
-                    <span>{v.toFixed(2)}</span>
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Text size="s" view="ghost">{selectedNodeData.paramLabels?.[k] || paramLabel(k)}:</Text>
+                    <Text size="s" weight="semibold">{v.toFixed(2)}</Text>
                   </div>
                 ))}
-              </div>
+              </Card>
               {selectedNodeData.actions.map((action) => {
                 const isStart = action.id === 'start';
                 const isStop = action.id === 'stop';
                 const isRunning = selectedNodeData.mode === 'RUNNING';
                 const isStopped = selectedNodeData.mode === 'STOPPED';
                 const disabled = (isStart && isRunning) || (isStop && isStopped);
-
+                const btnLabel = actionLabel(action.id);
                 return (
-                  <div key={action.id} style={{ marginBottom: '0.75rem' }}>
+                  <div key={action.id}>
                     {action.param && (
-                      <input
+                      <TextField
                         type="number"
                         placeholder={`${action.min} - ${action.max}`}
                         value={actionValue}
-                        onChange={(e) => setActionValue(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '6px 8px',
-                          background: '#0f0f1e',
-                          border: '1px solid #333',
-                          borderRadius: '4px',
-                          color: '#eee',
-                          marginBottom: '4px',
-                          boxSizing: 'border-box',
-                        }}
+                        onChange={(value) => setActionValue(value || '')}
+                        style={{ marginBottom: 4 }}
                       />
                     )}
-                    <button
+                    <Button
+                      label={disabled ? `${btnLabel} (недоступно)` : btnLabel}
+                      size="m"
+                      view={isStart ? 'primary' : isStop ? 'secondary' : 'ghost'}
+                      width="full"
+                      disabled={disabled || loading}
                       onClick={() => handleAction(selectedNodeData.id, action.id)}
-                      disabled={loading || disabled}
-                      style={{
-                        ...btnStyle,
-                        width: '100%',
-                        padding: '8px',
-                        background: isStart ? '#1b5e20' : isStop ? '#b71c1c' : '#0f3460',
-                        border: isStart ? '1px solid #4caf50' : isStop ? '1px solid #f44336' : '1px solid #e94560',
-                        color: isStart ? '#a5d6a7' : isStop ? '#ef9a9a' : '#e94560',
-                        opacity: disabled ? 0.4 : 1,
-                        cursor: disabled ? 'not-allowed' : 'pointer',
-                      }}
-                    >
-                      {action.label}
-                      {disabled && ' (недоступно)'}
-                    </button>
+                    />
                   </div>
                 );
               })}
-              {journal.length > 0 && (
-                <button
+              {!isExam && journal.length > 0 && (
+                <Button
+                  label={aiLoading ? 'МадИИна анализирует...' : '🤖 МадИИна-пояснение действия'}
+                  size="s"
+                  view="primary"
+                  iconLeft={IconChatStroked}
+                  width="full"
+                  loading={aiLoading}
                   onClick={fetchAiExplanation}
-                  disabled={aiLoading}
-                  style={{ ...btnStyle, width: '100%', background: '#4a148c', border: '1px solid #b39ddb', color: '#b39ddb', marginTop: '0.5rem' }}
-                >
-                  {aiLoading ? 'МадИИна анализирует...' : '🤖 МадИИна-пояснение действия'}
-                </button>
+                />
               )}
-            </>
+            </div>
           )}
-        </div>
+        </Card>
 
-        {/* Journal Panel */}
-        <div style={{ width: '350px', background: '#16213e', padding: '1rem', overflow: 'auto', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ marginTop: 0 }}>Журнал событий</h3>
-          <div ref={journalRef} style={{ flex: 1, overflow: 'auto' }}>
-            {journal.length === 0 && <p style={{ color: '#888' }}>Нет событий</p>}
-            {journal.map((entry, idx) => (
-              <div key={idx} style={{
-                padding: '8px',
-                marginBottom: '4px',
-                background: '#0f0f1e',
-                borderRadius: '6px',
-                borderLeft: `3px solid ${entry.result === 'Applied' ? '#4caf50' : entry.result === 'Clamped' ? '#ff9800' : '#f44336'}`,
-              }}>
-                <div style={{ fontSize: '0.8rem', color: '#888' }}>
-                  {new Date(entry.timestamp).toLocaleTimeString()}
-                </div>
-                <div style={{ fontSize: '0.9rem' }}>
-                  <strong>{NODE_LABELS[entry.node] || entry.node}</strong>: {actionLabel(entry.action)}
-                  {entry.value !== null && ` = ${entry.value.toFixed(1)}`}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#aaa' }}>
-                  Результат: {RESULT_LABELS[entry.result] || entry.result}
-                </div>
-                {entry.chain.length > 0 && (
-                  <div style={{ fontSize: '0.75rem', color: '#8bc34a', marginTop: '4px', padding: '4px 8px', background: '#1b2818', borderRadius: '4px' }}>
-                    <span style={{ color: '#8bc34a', fontWeight: 'bold' }}>Каскадное влияние:</span>
-                    {entry.chain.map((c, ci) => (
-                      <span key={ci}>
-                        {ci > 0 && ' → '}
-                        <span style={{ color: '#e94560' }}>{NODE_LABELS[c.node] || c.node}</span>
-                        <span style={{ color: '#aaa' }}>({c.changed.map(paramLabel).join(', ')})</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+        {!journalCollapsed && (
+          <Card verticalSpace="l" horizontalSpace="l" style={{ width: 320, borderRadius: 0, borderLeft: '1px solid #e8e8e8', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text as="h3" size="l" weight="semibold" style={{ marginTop: 0 }}>Журнал событий</Text>
+              <Button label="" size="xs" view="ghost" iconLeft={IconCollapse} onClick={() => setJournalCollapsed(true)} title="Свернуть журнал" />
+            </div>
+            <div ref={journalRef} style={{ flex: 1, overflow: 'auto' }}>
+              {journal.length === 0 && <Text as="p" size="s" view="ghost">Нет событий</Text>}
+              {journal.map((entry, idx) => (
+                <Card key={idx} verticalSpace="s" horizontalSpace="m" style={{ marginBottom: 4, background: '#f5f5f5', borderLeft: `3px solid ${entry.result === 'Applied' ? '#52c41a' : entry.result === 'Clamped' ? '#faad14' : '#ff4d4f'}` }}>
+                  <Text size="xs" view="ghost">{new Date(entry.timestamp).toLocaleTimeString()}</Text>
+                  <Text size="m"><strong>{NODE_LABELS[entry.node] || entry.node}</strong>: {actionLabel(entry.action)}{entry.value !== null && ` = ${entry.value.toFixed(1)}`}</Text>
+                  <Text size="xs" view="ghost">Результат: {RESULT_LABELS[entry.result] || entry.result}</Text>
+                  {entry.chain.length > 0 && (
+                    <div style={{ marginTop: 4, padding: 4, background: '#f0f9eb', borderRadius: 4 }}>
+                      <Text size="xs" weight="semibold" style={{ color: '#52c41a' }}>Каскадное влияние:</Text>
+                      {entry.chain.map((c, ci) => (
+                        <Text key={ci} size="xs">
+                          {ci > 0 && ' → '}
+                          <span style={{ color: '#1677ff' }}>{NODE_LABELS[c.node] || c.node}</span>
+                          <span style={{ color: '#888' }}>({c.changed.map(paramLabel).join(', ')})</span>
+                        </Text>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
+          </Card>
+        )}
+        {journalCollapsed && (
+          <Card verticalSpace="s" horizontalSpace="s" style={{ width: 48, borderRadius: 0, borderLeft: '1px solid #e8e8e8', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 8, gap: 4 }}>
+            <Button label="" size="xs" view="ghost" iconLeft={IconExpand} onClick={() => setJournalCollapsed(false)} title="Развернуть журнал" />
+            <Text size="xs" view="ghost" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', marginTop: 4 }}>Журнал ({journal.length})</Text>
+          </Card>
+        )}
       </div>
 
-      {/* Hints Modal */}
-      {showHint === 'hints' && currentScenario && (
-        <div style={{ position: 'fixed', top: '20%', left: '50%', transform: 'translateX(-50%)', background: '#16213e', padding: '2rem', borderRadius: '12px', border: '1px solid #333', zIndex: 100, minWidth: '400px' }}>
-          <h3>Подсказки по фазам</h3>
-          {currentScenario.phases.map((ph) => (
-            <div key={ph.id} style={{ marginBottom: '1rem' }}>
-              <strong style={{ color: '#e94560' }}>{ph.title}</strong>
-              <p style={{ color: '#aaa', margin: '4px 0' }}>
-                {currentScenario.bankHints?.find((h: any) => h.key === ph.id)?.text || 'Нет подсказки'}
-              </p>
-            </div>
-          ))}
-          <button onClick={() => setShowHint(null)} style={btnStyle}>Закрыть</button>
-        </div>
+      {!isExam && showHint && currentScenario && (
+        <Modal isOpen={showHint} onClickOutside={() => setShowHint(false)}>
+          <Card verticalSpace="l" horizontalSpace="l" style={{ minWidth: 400 }}>
+            <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 12 }}>Подсказки по фазам</Text>
+            {currentScenario.phases.map((ph) => (
+              <div key={ph.id} style={{ marginBottom: 12 }}>
+                <Text size="m" weight="semibold" style={{ color: '#1677ff' }}>{ph.title}</Text>
+                <Text size="s" view="ghost">
+                  {currentScenario.bankHints?.find((h: any) => h.key === ph.id)?.text || 'Нет подсказки'}
+                </Text>
+              </div>
+            ))}
+            <Button label="Закрыть" size="s" view="ghost" onClick={() => setShowHint(false)} />
+          </Card>
+        </Modal>
       )}
     </div>
   );
 }
 
-function Mnemoscheme({
-  graph,
-  selectedNode,
-  highlightedNodes,
-  onSelect,
-}: {
+interface SchemeColors {
+  bg: string; grid: string; header: string;
+  equipFill: string; equipDark: string;
+  pipe: string; arrow: string;
+  textMain: string; textSec: string;
+  paramBg: string; paramBorder: string; paramLabel: string;
+  instrFill: string; instrStroke: string; instrText: string;
+  flow: string; select: string; highlight: string;
+  flame: string; hv: string; water: string; valve: string;
+  legend: string;
+}
+
+const DARK_COLORS: SchemeColors = {
+  bg: '#0d1117', grid: '#141b2a', header: '#161e2e',
+  equipFill: '#111a2a', equipDark: '#0a1220',
+  pipe: '#2a3a5a', arrow: '#3a5a7a',
+  textMain: '#c0c8d0', textSec: '#5a7a8a',
+  paramBg: '#0a0f1a', paramBorder: '#1e2d3d', paramLabel: '#5a7a8a',
+  instrFill: '#0d1520', instrStroke: '#3a5a7a', instrText: '#8ab4d8',
+  flow: '#4caf50', select: '#e94560', highlight: '#ffeb3b',
+  flame: '#ff6600', hv: '#ff9800', water: '#1565c0', valve: '#4a90d9',
+  legend: '#111a2a',
+};
+
+const LIGHT_COLORS: SchemeColors = {
+  bg: '#c8ced6', grid: '#bcc3cc', header: '#b0b8c2',
+  equipFill: '#ffffff', equipDark: '#e8ecf0',
+  pipe: '#5a6a7a', arrow: '#4a5a6a',
+  textMain: '#1a1a1a', textSec: '#5a6a7a',
+  paramBg: '#f0f2f5', paramBorder: '#c8ced6', paramLabel: '#5a6a7a',
+  instrFill: '#eef1f5', instrStroke: '#7a8a9a', instrText: '#2a4a6a',
+  flow: '#2e7d32', select: '#1565c0', highlight: '#e65100',
+  flame: '#d84315', hv: '#e65100', water: '#1565c0', valve: '#1976d2',
+  legend: '#dde2e8',
+};
+
+function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect, dark }: {
   graph: any;
   selectedNode: string | null;
   highlightedNodes: Set<string>;
   onSelect: (id: string) => void;
+  dark: boolean;
 }) {
-  const svgW = 1040;
-  const svgH = 440;
+  const c = dark ? DARK_COLORS : LIGHT_COLORS;
+  const svgW = 1000;
+  const svgH = 500;
+  const pipeY = 130;
 
   const getNode = (nodeId: string) => graph?.nodes.find((n: any) => n.id === nodeId);
-  const nodeColor = (n: any) => n ? (MODE_COLORS[n.mode] || '#555') : '#555';
+  const nodeColor = (n: any) => n ? (MODE_COLORS[n.mode] || (dark ? '#555' : '#999')) : (dark ? '#555' : '#999');
   const isRunning = (nodeId: string) => getNode(nodeId)?.mode === 'RUNNING';
 
   const paramBox = (x: number, y: number, label: string, value: number, unit: string, running: boolean) => {
-    const vcolor = running ? '#4caf50' : '#666';
+    const vcolor = running ? c.flow : c.textSec;
     return (
       <g>
-        <rect x={x} y={y} width="88" height="28" rx="3" fill="#0a0f1a" stroke="#1e2d3d" strokeWidth="1" />
-        <text x={x + 4} y={y + 11} fill="#5a7a8a" fontSize="7" fontFamily="monospace">{label}</text>
-        <text x={x + 4} y={y + 23} fill={vcolor} fontSize="11" fontFamily="monospace" fontWeight="bold">
-          {value.toFixed(1)} {unit}
-        </text>
+        <rect x={x} y={y} width="92" height="28" rx="3" fill={c.paramBg} stroke={c.paramBorder} strokeWidth="1" />
+        <text x={x + 4} y={y + 11} fill={c.paramLabel} fontSize="7" fontFamily="monospace">{label}</text>
+        <text x={x + 4} y={y + 23} fill={vcolor} fontSize="11" fontFamily="monospace" fontWeight="bold">{value.toFixed(1)} {unit}</text>
       </g>
     );
   };
 
   const instrumentTag = (x: number, y: number, tag: string, label: string) => (
     <g>
-      <circle cx={x} cy={y} r="13" fill="#0d1520" stroke="#3a5a7a" strokeWidth="1.5" />
-      <line x1={x - 13} y1={y} x2={x - 20} y2={y} stroke="#3a5a7a" strokeWidth="1" />
-      <text x={x} y={y - 1} textAnchor="middle" fill="#8ab4d8" fontSize="7" fontWeight="bold">{tag}</text>
-      <text x={x} y={y + 8} textAnchor="middle" fill="#6a8aaa" fontSize="6">{label}</text>
+      <circle cx={x} cy={y} r="13" fill={c.instrFill} stroke={c.instrStroke} strokeWidth="1.5" />
+      <line x1={x - 13} y1={y} x2={x - 20} y2={y} stroke={c.instrStroke} strokeWidth="1" />
+      <text x={x} y={y - 1} textAnchor="middle" fill={c.instrText} fontSize="7" fontWeight="bold">{tag}</text>
+      <text x={x} y={y + 8} textAnchor="middle" fill={c.textSec} fontSize="6">{label}</text>
     </g>
   );
 
-  return (
-    <svg width={svgW} height={svgH} style={{ background: '#0d1117', borderRadius: '8px', minWidth: svgW, border: '1px solid #1a2332' }}>
-      <defs>
-        {/* Grid pattern */}
-        <pattern id="scadaGrid" width="20" height="20" patternUnits="userSpaceOnUse">
-          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#141b2a" strokeWidth="0.5" />
-        </pattern>
-        {/* Flow animation for active pipes */}
-        <pattern id="flowActive" width="16" height="2" patternUnits="userSpaceOnUse">
-          <line x1="0" y1="1" x2="8" y2="1" stroke="#4caf50" strokeWidth="2" />
-        </pattern>
-        {/* Arrow marker */}
-        <marker id="pidArrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L0,6 L8,3 z" fill="#3a5a7a" />
-        </marker>
-      </defs>
+  const pipe = (x1: number, y1: number, x2: number, y2: number, running: boolean, w = 6) => (
+    <g>
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={c.pipe} strokeWidth={w} />
+      {running && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={c.flow} strokeWidth={w - 2} strokeDasharray="8 4" />}
+    </g>
+  );
 
-      {/* Grid background */}
+  const arrow = (x: number, y: number, dir: 'right' | 'down' | 'left' | 'up') => {
+    const sz = 6;
+    if (dir === 'right') return <polygon points={`${x},${y} ${x - sz},${y - sz} ${x - sz},${y + sz}`} fill={c.arrow} />;
+    if (dir === 'down') return <polygon points={`${x},${y} ${x - sz},${y - sz} ${x + sz},${y - sz}`} fill={c.arrow} />;
+    if (dir === 'left') return <polygon points={`${x},${y} ${x + sz},${y - sz} ${x + sz},${y + sz}`} fill={c.arrow} />;
+    return <polygon points={`${x},${y} ${x - sz},${y + sz} ${x + sz},${y + sz}`} fill={c.arrow} />;
+  };
+
+  return (
+    <svg width={svgW} height={svgH} style={{ background: c.bg, borderRadius: 8, minWidth: svgW, border: `1px solid ${dark ? '#1a2332' : '#a0a8b0'}` }}>
+      <defs>
+        <pattern id="scadaGrid" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke={c.grid} strokeWidth="0.5" />
+        </pattern>
+      </defs>
       <rect width={svgW} height={svgH} fill="url(#scadaGrid)" />
 
-      {/* Title bar */}
-      <rect x="0" y="0" width={svgW} height="24" fill="#161e2e" />
-      <text x="12" y="16" fill="#8ab4d8" fontSize="11" fontWeight="bold" fontFamily="monospace">
-        МНЕМОСХЕМА ЭЛОУ-АВТ — P&amp;ID
-      </text>
-      <text x={svgW - 12} y="16" textAnchor="end" fill="#5a7a8a" fontSize="9" fontFamily="monospace">
-        {new Date().toLocaleTimeString('ru-RU')}
-      </text>
+      <rect x="0" y="0" width={svgW} height="24" fill={c.header} />
+      <text x="12" y="16" fill={c.instrText} fontSize="11" fontWeight="bold" fontFamily="monospace">МНЕМОСХЕМА ЭЛОУ-АВТ - P&amp;ID</text>
+      <text x={svgW - 12} y="16" textAnchor="end" fill={c.textSec} fontSize="9" fontFamily="monospace">{new Date().toLocaleTimeString('ru-RU')}</text>
 
-      {/* === Pipelines === */}
-      {/* Main process line: Вход → Н-82 → А-19 → Э-1 → Выход */}
-      {/* Вход → Н-82 */}
-      <line x1="30" y1="120" x2="130" y2="120" stroke="#2a3a5a" strokeWidth="6" />
-      {isRunning('feed_pump') && <line x1="30" y1="120" x2="130" y2="120" stroke="url(#flowActive)" strokeWidth="4" />}
-      <text x="32" y="110" fill="#5a7a8a" fontSize="9" fontFamily="monospace">НЕФТЬ ВХОД</text>
-      <polygon points="130,120 122,116 122,124" fill="#3a5a7a" />
+      {/* === MAIN LINE (y=130): Вода → Н-82 → А-19 → Э-1 → Частично обезвоженная нефть === */}
+      <text x="20" y="118" fill={c.textSec} fontSize="9" fontFamily="monospace">Вода</text>
+      {pipe(20, pipeY, 102, pipeY, isRunning('feed_pump'))}
+      {arrow(102, pipeY, 'right')}
 
-      {/* Н-82 → А-19 */}
-      <line x1="250" y1="120" x2="370" y2="120" stroke="#2a3a5a" strokeWidth="6" />
-      {isRunning('feed_pump') && <line x1="250" y1="120" x2="370" y2="120" stroke="url(#flowActive)" strokeWidth="4" />}
-      <polygon points="370,120 362,116 362,124" fill="#3a5a7a" />
+      {pipe(158, pipeY, 300, pipeY, isRunning('feed_pump'))}
+      {arrow(300, pipeY, 'right')}
 
-      {/* А-19 → Э-1 */}
-      <line x1="550" y1="120" x2="680" y2="120" stroke="#2a3a5a" strokeWidth="6" />
-      {isRunning('preheater') && <line x1="550" y1="120" x2="680" y2="120" stroke="url(#flowActive)" strokeWidth="4" />}
-      <polygon points="680,120 672,116 672,124" fill="#3a5a7a" />
+      {pipe(460, pipeY, 560, pipeY, isRunning('preheater'))}
+      {arrow(560, pipeY, 'right')}
 
-      {/* Э-1 → Выход (товарная нефть) */}
-      <line x1="840" y1="120" x2="970" y2="120" stroke="#2a3a5a" strokeWidth="6" />
-      {isRunning('dehydrator') && <line x1="840" y1="120" x2="970" y2="120" stroke="url(#flowActive)" strokeWidth="4" />}
-      <polygon points="970,120 962,116 962,124" fill="#3a5a7a" />
-      <text x="940" y="110" fill="#5a7a8a" fontSize="9" fontFamily="monospace">ТОВАР</text>
+      {pipe(720, pipeY, 860, pipeY, isRunning('dehydrator'))}
+      {arrow(860, pipeY, 'right')}
+      <text x="868" y="118" fill={c.textSec} fontSize="8" fontFamily="monospace">Частично обезвоженная нефть</text>
 
-      {/* Э-1 → Е-16 (дренаж воды вниз) */}
-      <line x1="760" y1="180" x2="760" y2="260" stroke="#2a3a5a" strokeWidth="5" />
-      {isRunning('dehydrator') && <line x1="760" y1="180" x2="760" y2="260" stroke="url(#flowActive)" strokeWidth="3" />}
-      <polygon points="760,260 756,252 764,252" fill="#3a5a7a" />
-      <text x="768" y="225" fill="#3a6a8a" fontSize="8" fontFamily="monospace">→ вода</text>
+      {/* === Below А-19: vertical pipe with blue valve → furnace === */}
+      {pipe(380, 155, 380, 175, isRunning('furnace'), 5)}
+      {/* Blue valve: two triangles pointing at each other */}
+      <polygon points={`365,175 365,195 380,185`} fill={c.valve} stroke={c.valve} strokeWidth="1" />
+      <polygon points={`395,175 395,195 380,185`} fill={c.valve} stroke={c.valve} strokeWidth="1" />
+      {pipe(380, 195, 380, 235, isRunning('furnace'), 5)}
+      {arrow(380, 175, 'up')}
+      <text x="395" y="185" fill={c.textSec} fontSize="7" fontFamily="monospace">Нагретая сырая нефть</text>
 
-      {/* Е-16 → Р-11 (наregулятор) */}
-      <line x1="700" y1="300" x2="520" y2="300" stroke="#2a3a5a" strokeWidth="5" />
-      {isRunning('tank') && <line x1="700" y1="300" x2="520" y2="300" stroke="url(#flowActive)" strokeWidth="3" />}
-      <polygon points="520,300 528,296 528,304" fill="#3a5a7a" />
+      {/* === Below Э-1: vertical pipe down to Е-16 === */}
+      {pipe(640, 165, 640, 290, isRunning('dehydrator'), 5)}
+      {arrow(640, 290, 'down')}
+      <text x="648" y="230" fill={c.textSec} fontSize="7" fontFamily="monospace">→ вода</text>
 
-      {/* Р-11 → слив */}
-      <line x1="420" y1="300" x2="340" y2="300" stroke="#2a3a5a" strokeWidth="5" />
-      {isRunning('regulator') && <line x1="420" y1="300" x2="340" y2="300" stroke="url(#flowActive)" strokeWidth="3" />}
-      <text x="310" y="290" fill="#5a7a8a" fontSize="8" fontFamily="monospace">→ слив</text>
+      {/* === Е-16 → Р-11 (left) === */}
+      {pipe(590, 317, 500, 317, isRunning('tank'), 5)}
+      {arrow(500, 317, 'left')}
 
-      {/* === Equipment symbols (ISA P&ID) === */}
+      {/* === Below Е-16: vertical pipe down → Стоки === */}
+      {pipe(640, 345, 640, 420, isRunning('tank'), 5)}
+      {arrow(640, 420, 'down')}
+      <text x="618" y="440" fill={c.textSec} fontSize="9" fontFamily="monospace">Стоки</text>
+
+      {/* === EQUIPMENT === */}
       {graph?.nodes.map((node: any) => {
-        const pos = NODE_POSITIONS[node.id];
-        if (!pos) return null;
-        const color = nodeColor(node);
         const isSel = selectedNode === node.id;
         const isHi = highlightedNodes.has(node.id);
-        const label = NODE_LABELS[node.id] || node.name;
-        const selStroke = isSel ? '#e94560' : isHi ? '#ffeb3b' : color;
+        const color = nodeColor(node);
+        const selStroke = isSel ? c.select : isHi ? c.highlight : color;
         const selW = (isSel || isHi) ? 3 : 1.5;
+        const label = NODE_LABELS[node.id] || node.name;
 
-        /* Centrifugal pump (ISA symbol: circle with triangle from bottom) */
         if (node.type === 'feed_pump') {
           const p = node.parameters;
+          const cx = 130, cy = pipeY;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              {/* Pump body */}
-              <circle cx={pos.x + 60} cy={pos.y + 30} r="28" fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              {/* Triangle (discharge) */}
-              <polygon points={`${pos.x + 60},${pos.y + 2} ${pos.x + 48},${pos.y + 22} ${pos.x + 72},${pos.y + 22}`} fill="none" stroke={selStroke} strokeWidth={selW} />
-              {/* Suction (bottom line to center) */}
-              <line x1={pos.x + 60} y1={pos.y + 30} x2={pos.x + 60} y2={pos.y + 58} stroke={selStroke} strokeWidth={selW} />
-              <text x={pos.x + 60} y={pos.y + 35} textAnchor="middle" fill="#c0c8d0" fontSize="10" fontWeight="bold">{label}</text>
-              <text x={pos.x + 60} y={pos.y + 76} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {/* Instrument: FIT (Flow Indicator Transmitter) */}
-              {instrumentTag(pos.x + 15, pos.y + 55, 'FIT', '101')}
-              {/* Param boxes */}
-              {paramBox(pos.x - 10, pos.y + 90, 'МОЩНОСТЬ', p.power_percent || 0, '%', node.mode === 'RUNNING')}
-              {paramBox(pos.x + 88, pos.y + 90, 'РАСХОД', p.flow_rate || 0, 'м³/ч', node.mode === 'RUNNING')}
+              <circle cx={cx} cy={cy} r="28" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <polygon points={`${cx - 16},${cy - 14} ${cx - 16},${cy + 14} ${cx + 16},${cy}`} fill="none" stroke={selStroke} strokeWidth={selW} />
+              <text x={cx} y={cy + 4} textAnchor="middle" fill={c.textMain} fontSize="9" fontWeight="bold">{label}</text>
+              <text x={cx} y={cy + 48} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
+              {instrumentTag(cx - 35, cy + 30, 'FIT', '101')}
+              {paramBox(cx - 46, cy + 58, 'МОЩНОСТЬ', p.power_percent || 0, '%', node.mode === 'RUNNING')}
+              {paramBox(cx + 46, cy + 58, 'РАСХОД', p.flow_rate || 0, 'м³/ч', node.mode === 'RUNNING')}
             </g>
           );
         }
-
-        /* Shell-and-tube heat exchanger (ISA: rectangle with tube ends) */
         if (node.type === 'preheater') {
           const p = node.parameters;
+          const x = 300, y = 105;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              {/* Shell */}
-              <rect x={pos.x} y={pos.y + 10} width="180" height="50" rx="6" fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              {/* Tube bundle lines */}
-              {[0, 1, 2, 3].map(i => (
-                <line key={i} x1={pos.x + 8} y1={pos.y + 20 + i * 10} x2={pos.x + 172} y2={pos.y + 20 + i * 10} stroke={color} strokeWidth="0.8" opacity="0.5" />
-              ))}
-              {/* Tube ends (bonnets) */}
-              <rect x={pos.x - 8} y={pos.y + 14} width="8" height="42" fill="#0a1220" stroke={selStroke} strokeWidth={selW} />
-              <rect x={pos.x + 180} y={pos.y + 14} width="8" height="42" fill="#0a1220" stroke={selStroke} strokeWidth={selW} />
-              <text x={pos.x + 90} y={pos.y + 42} textAnchor="middle" fill="#c0c8d0" fontSize="11" fontWeight="bold">{label}</text>
-              <text x={pos.x + 90} y={pos.y + 78} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {/* Instrument: TIC (Temperature Indicator Controller) */}
-              {instrumentTag(pos.x + 160, pos.y, 'TIC', '201')}
-              {paramBox(pos.x + 20, pos.y + 90, 'ТЕМПЕРАТУРА', p.temperature || 0, '°C', node.mode === 'RUNNING')}
+              <rect x={x} y={y} width="160" height="50" rx="6" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              {[0, 1, 2, 3].map(i => <line key={i} x1={x + 8} y1={y + 10 + i * 10} x2={x + 152} y2={y + 10 + i * 10} stroke={color} strokeWidth="0.8" opacity="0.5" />)}
+              <rect x={x - 8} y={y + 4} width="8" height="42" fill={c.equipDark} stroke={selStroke} strokeWidth={selW} />
+              <rect x={x + 160} y={y + 4} width="8" height="42" fill={c.equipDark} stroke={selStroke} strokeWidth={selW} />
+              <text x={x + 80} y={y + 32} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold">{label}</text>
+              <text x={x + 80} y={y + 70} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
+              {instrumentTag(x + 140, y - 10, 'TIC', '201')}
+              {paramBox(x + 20, y + 82, 'ТЕМПЕРАТУРА', p.temperature || 0, '°C', node.mode === 'RUNNING')}
             </g>
           );
         }
-
-        /* Electrodehydrator (vessel with electrode bars) */
         if (node.type === 'electrodehydrator') {
           const p = node.parameters;
+          const x = 560, y = 95;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              {/* Vessel body */}
-              <rect x={pos.x} y={pos.y} width="160" height="75" rx="10" fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              {/* Electrode bars (horizontal lines inside) */}
-              {[20, 35, 50].map(dy => (
-                <line key={dy} x1={pos.x + 15} y1={pos.y + dy} x2={pos.x + 145} y2={pos.y + dy} stroke="#ff9800" strokeWidth="1.5" opacity="0.6" />
-              ))}
-              {/* HV symbol */}
-              <text x={pos.x + 80} y={pos.y + 16} textAnchor="middle" fill="#ff9800" fontSize="8" fontFamily="monospace">≈ HV</text>
-              <text x={pos.x + 80} y={pos.y + 67} textAnchor="middle" fill="#c0c8d0" fontSize="11" fontWeight="bold">{label}</text>
-              <text x={pos.x + 80} y={pos.y + 96} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {/* Instruments */}
-              {instrumentTag(pos.x + 145, pos.y + 5, 'WIT', '301')}
-              {instrumentTag(pos.x + 145, pos.y + 70, 'SIT', '302')}
-              {paramBox(pos.x - 20, pos.y + 110, 'ВОДА', p.water_content || 0, '%', node.mode === 'RUNNING')}
-              {paramBox(pos.x + 88, pos.y + 110, 'СОЛИ', p.salt_mg_l || 0, 'мг/л', node.mode === 'RUNNING')}
+              <rect x={x} y={y} width="160" height="70" rx="10" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              {[25, 45, 65].map(dy => <line key={dy} x1={x + 15} y1={y + dy} x2={x + 145} y2={y + dy} stroke={c.hv} strokeWidth="1.5" opacity="0.6" />)}
+              <text x={x + 80} y={y + 14} textAnchor="middle" fill={c.hv} fontSize="8" fontFamily="monospace">≈ HV</text>
+              <text x={x + 80} y={y + 55} textAnchor="middle" fill={c.textMain} fontSize="11" fontWeight="bold">{label}</text>
+              <text x={x + 80} y={y + 80} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
+              {instrumentTag(x + 145, y + 5, 'WIT', '301')}
+              {instrumentTag(x + 145, y + 60, 'SIT', '302')}
+              {paramBox(x - 20, y + 102, 'ВОДА', p.water_content || 0, '%', node.mode === 'RUNNING')}
+              {paramBox(x + 88, y + 102, 'СОЛИ', p.salt_mg_l || 0, 'мг/л', node.mode === 'RUNNING')}
             </g>
           );
         }
-
-        /* Tank/Drum (horizontal cylinder) */
-        if (node.type === 'tank') {
-          const p = node.parameters;
-          return (
-            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              {/* Cylinder body */}
-              <rect x={pos.x} y={pos.y} width="100" height="55" rx="27" fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              <text x={pos.x + 50} y={pos.y + 25} textAnchor="middle" fill="#c0c8d0" fontSize="10" fontWeight="bold">{label}</text>
-              <text x={pos.x + 50} y={pos.y + 40} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {/* Level indicator (fill bar inside) */}
-              <rect x={pos.x + 8} y={pos.y + 10} width="84" height="35" rx="17" fill="none" stroke="#1e2d3d" strokeWidth="0.5" />
-              <rect x={pos.x + 8} y={pos.y + 45 - (p.level || 0) * 0.35} width="84" height={(p.level || 0) * 0.35} rx="17" fill="#1565c0" opacity="0.3" />
-              {instrumentTag(pos.x - 20, pos.y + 10, 'LIT', '401')}
-              {paramBox(pos.x - 10, pos.y + 75, 'УРОВЕНЬ', p.level || 0, '%', node.mode === 'RUNNING')}
-            </g>
-          );
-        }
-
-        /* Control valve (ISA: bow-tie with actuator) */
-        if (node.type === 'regulator') {
-          const p = node.parameters;
-          const vpos = p.valve_pos || 0;
-          return (
-            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              {/* Actuator (top) */}
-              <rect x={pos.x + 25} y={pos.y - 15} width="20" height="12" rx="2" fill="#0a1220" stroke={selStroke} strokeWidth={selW} />
-              <line x1={pos.x + 35} y1={pos.y - 3} x2={pos.x + 35} y2={pos.y + 5} stroke={selStroke} strokeWidth={selW} />
-              {/* Valve body (bow-tie) */}
-              <polygon points={`${pos.x + 10},${pos.y + 5} ${pos.x + 35},${pos.y + 25} ${pos.x + 10},${pos.y + 45}`} fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              <polygon points={`${pos.x + 60},${pos.y + 5} ${pos.x + 35},${pos.y + 25} ${pos.x + 60},${pos.y + 45}`} fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              {/* Stem position indicator */}
-              <line x1={pos.x + 35} y1={pos.y + 5} x2={pos.x + 35} y2={pos.y + 25 - vpos * 0.2} stroke="#4caf50" strokeWidth="2" opacity="0.7" />
-              <text x={pos.x + 35} y={pos.y + 60} textAnchor="middle" fill="#c0c8d0" fontSize="10" fontWeight="bold">{label}</text>
-              <text x={pos.x + 35} y={pos.y + 73} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {instrumentTag(pos.x + 65, pos.y + 5, 'FIC', '501')}
-              {paramBox(pos.x - 10, pos.y + 85, 'КЛАПАН', vpos, '%', node.mode === 'RUNNING')}
-            </g>
-          );
-        }
-
-        /* Output flange */
-        if (node.type === 'output') {
-          const p = node.parameters;
-          return (
-            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              <rect x={pos.x} y={pos.y} width="60" height="50" rx="4" fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              {/* Flange rings */}
-              <line x1={pos.x + 10} y1={pos.y} x2={pos.x + 10} y2={pos.y + 50} stroke={selStroke} strokeWidth="1" />
-              <line x1={pos.x + 50} y1={pos.y} x2={pos.x + 50} y2={pos.y + 50} stroke={selStroke} strokeWidth="1" />
-              <text x={pos.x + 30} y={pos.y + 22} textAnchor="middle" fill="#c0c8d0" fontSize="9" fontWeight="bold">{label}</text>
-              <text x={pos.x + 30} y={pos.y + 35} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {paramBox(pos.x - 5, pos.y + 60, 'ВОДА', p.water_content || 0, '%', node.mode === 'RUNNING')}
-            </g>
-          );
-        }
-
-        /* Furnace (shown as fired heater symbol) */
         if (node.type === 'furnace') {
           const p = node.parameters;
+          const x = 340, y = 235;
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              <rect x={pos.x} y={pos.y} width="90" height="55" rx="4" fill="#111a2a" stroke={selStroke} strokeWidth={selW} />
-              {/* Flame symbol */}
-              <path d={`M ${pos.x + 35} ${pos.y + 45} Q ${pos.x + 30} ${pos.y + 30} ${pos.x + 40} ${pos.y + 20} Q ${pos.x + 50} ${pos.y + 30} ${pos.x + 45} ${pos.y + 45}`} fill="none" stroke="#ff6600" strokeWidth="1.5" />
-              <text x={pos.x + 45} y={pos.y + 52} textAnchor="middle" fill="#c0c8d0" fontSize="9" fontWeight="bold">{label}</text>
-              <text x={pos.x + 45} y={pos.y + 73} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {paramBox(pos.x - 5, pos.y + 85, 'ТЕМП', p.temperature || 0, '°C', node.mode === 'RUNNING')}
+              <rect x={x} y={y} width="80" height="50" rx="4" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <path d={`M ${x + 25} ${y + 42} Q ${x + 20} ${y + 25} ${x + 30} ${y + 15} Q ${x + 40} ${y + 25} ${x + 35} ${y + 42}`} fill="none" stroke={c.flame} strokeWidth="1.5" />
+              <path d={`M ${x + 45} ${y + 42} Q ${x + 40} ${y + 25} ${x + 50} ${y + 15} Q ${x + 60} ${y + 25} ${x + 55} ${y + 42}`} fill="none" stroke={c.flame} strokeWidth="1.5" />
+              <text x={x + 40} y={y + 30} textAnchor="middle" fill={c.textMain} fontSize="9" fontWeight="bold">{label}</text>
+              <text x={x + 40} y={y + 66} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
+              {instrumentTag(x + 70, y - 5, 'TIC', '601')}
+              {paramBox(x - 6, y + 72, 'ТЕМП', p.temperature || 0, '°C', node.mode === 'RUNNING')}
             </g>
           );
         }
-
+        if (node.type === 'tank') {
+          const p = node.parameters;
+          const x = 590, y = 290;
+          return (
+            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
+              <rect x={x} y={y} width="100" height="55" rx="27" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <text x={x + 50} y={y + 25} textAnchor="middle" fill={c.textMain} fontSize="10" fontWeight="bold">{label}</text>
+              <text x={x + 50} y={y + 40} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
+              <rect x={x + 8} y={y + 10} width="84" height="35" rx="17" fill="none" stroke={c.paramBorder} strokeWidth="0.5" />
+              <rect x={x + 8} y={y + 45 - (p.level || 0) * 0.35} width="84" height={(p.level || 0) * 0.35} rx="17" fill={c.water} opacity="0.3" />
+              {instrumentTag(x - 20, y + 10, 'LIT', '401')}
+              {paramBox(x - 6, y + 62, 'УРОВЕНЬ', p.level || 0, '%', node.mode === 'RUNNING')}
+            </g>
+          );
+        }
+        if (node.type === 'regulator') {
+          const p = node.parameters;
+          const x = 420, y = 300;
+          return (
+            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
+              <rect x={x} y={y} width="80" height="45" rx="4" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
+              <text x={x + 40} y={y + 22} textAnchor="middle" fill={c.textMain} fontSize="10" fontWeight="bold">{label}</text>
+              <text x={x + 40} y={y + 36} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
+              {instrumentTag(x + 70, y - 5, 'FIC', '501')}
+              {paramBox(x - 6, y + 52, 'КЛАПАН', p.valve_pos || 0, '%', node.mode === 'RUNNING')}
+            </g>
+          );
+        }
         return null;
       })}
 
-      {/* Legend bar at bottom */}
-      <rect x="0" y={svgH - 28} width={svgW} height="28" fill="#111a2a" />
-      <text x="12" y={svgH - 12} fill="#5a7a8a" fontSize="8" fontFamily="monospace">
-        ● Работает
-      </text>
-      <circle cx="10" cy={svgH - 15} r="4" fill="#4caf50" />
-      <text x="80" y={svgH - 12} fill="#5a7a8a" fontSize="8" fontFamily="monospace">Остановлен</text>
-      <circle cx="78" cy={svgH - 15} r="4" fill="#888" />
-      <text x="155" y={svgH - 12} fill="#5a7a8a" fontSize="8" fontFamily="monospace">Авария</text>
-      <circle cx="153" cy={svgH - 15} r="4" fill="#f44336" />
-      <text x="220" y={svgH - 12} fill="#3a6a8a" fontSize="8" fontFamily="monospace">→ поток нефти</text>
-      <text x="340" y={svgH - 12} fill="#8ab4d8" fontSize="8" fontFamily="monospace">○ прибор (ISA)</text>
+      {/* Legend */}
+      <rect x="0" y={svgH - 28} width={svgW} height="28" fill={c.legend} />
+      <circle cx="10" cy={svgH - 15} r="4" fill={dark ? '#4caf50' : '#2e7d32'} />
+      <text x="20" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">Работает</text>
+      <circle cx="80" cy={svgH - 15} r="4" fill={dark ? '#888' : '#999'} />
+      <text x="90" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">Остановлен</text>
+      <circle cx="160" cy={svgH - 15} r="4" fill={dark ? '#f44336' : '#c62828'} />
+      <text x="170" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">Авария</text>
+      <polygon points={`220,${svgH - 19} 220,${svgH - 11} 228,${svgH - 15}`} fill={c.valve} />
+      <text x="234" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">клапан</text>
+      <text x="280" y={svgH - 12} fill={c.textSec} fontSize="8" fontFamily="monospace">→ поток</text>
+      <text x="340" y={svgH - 12} fill={c.instrText} fontSize="8" fontFamily="monospace">○ КИПиА</text>
     </svg>
   );
 }
-
-const btnStyle: React.CSSProperties = {
-  padding: '6px 16px',
-  background: '#0f3460',
-  color: '#eee',
-  border: '1px solid #333',
-  borderRadius: '6px',
-  cursor: 'pointer',
-  fontSize: '0.9rem',
-};

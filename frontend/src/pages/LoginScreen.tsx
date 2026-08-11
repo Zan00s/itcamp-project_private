@@ -1,4 +1,7 @@
 import { useEffect } from 'react';
+import { Button } from '@consta/uikit/Button';
+import { Card } from '@consta/uikit/Card';
+import { Text } from '@consta/uikit/Text';
 import { login, getUser, getUserManager } from '../auth/oidc';
 
 export default function LoginScreen() {
@@ -17,17 +20,25 @@ export default function LoginScreen() {
 
   return (
     <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', minHeight: '100vh', background: '#1a1a2e', color: '#eee',
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     }}>
-      <h1 style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>КТК ЭЛОУ-АВТ</h1>
-      <p style={{ color: '#aaa', marginBottom: '2rem' }}>Компьютерный тренажёрный комплекс</p>
-      <button onClick={login} style={{
-        padding: '12px 48px', fontSize: '1.2rem', background: '#0f3460',
-        color: '#e94560', border: '2px solid #e94560', borderRadius: '8px', cursor: 'pointer',
-      }}>
-        Войти через Keycloak
-      </button>
+      <Card col={1} verticalSpace="3xl" horizontalSpace="3xl" style={{ width: 420, textAlign: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+          <div>
+            <Text as="h1" size="2xl" weight="bold" style={{ color: '#1677ff', marginBottom: 8 }}>
+              КТК ЭЛОУ-АВТ
+            </Text>
+            <Text as="p" size="m" view="ghost">
+              Компьютерный тренажёрный комплекс
+            </Text>
+            <Text as="p" size="s" view="ghost">
+              Электродегидрация и обессоливание
+            </Text>
+          </div>
+          <Button label="Войти через Keycloak" size="l" view="primary" width="full" onClick={login} />
+        </div>
+      </Card>
     </div>
   );
 }

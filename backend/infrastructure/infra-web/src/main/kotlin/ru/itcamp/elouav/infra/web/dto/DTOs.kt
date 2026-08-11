@@ -79,6 +79,13 @@ data class ScenarioDTO(
     val phases: List<PhaseDTO>,
     val passingScore: Int,
     val bankHints: List<HintDTO> = emptyList(),
+    val initialState: List<InitialStateNodeDTO> = emptyList(),
+)
+
+data class InitialStateNodeDTO(
+    val node: String,
+    val mode: String = "RUNNING",
+    val parameters: Map<String, Double> = emptyMap(),
 )
 
 data class PhaseDTO(
@@ -145,6 +152,7 @@ data class ScenarioCreateDTO(
     val passingScore: Int = 70,
     val phases: List<PhaseCreateDTO>,
     val hints: List<HintDTO>? = null,
+    val initialState: List<InitialStateNodeDTO>? = null,
 )
 
 data class PhaseCreateDTO(
@@ -162,6 +170,7 @@ data class ScenarioDraftRequestDTO(
     val topic: String? = null,
     val difficulty: Int? = null,
     val timeoutSec: Int? = null,
+    val context: String? = null,
 )
 
 data class ScenarioDraftDTO(
@@ -242,6 +251,13 @@ object DTOMapper {
         },
         passingScore = scenario.passingScore,
         bankHints = scenario.bankHints.map { HintDTO(it.key, it.text) },
+        initialState = scenario.setup.nodesOverride.map { (node, props) ->
+            val mode = (props["mode"] as? String) ?: "RUNNING"
+            val params = (props["parameters"] as? Map<*, *>)?.entries
+                ?.filter { it.key is String && it.value is Number }
+                ?.associate { it.key as String to (it.value as Number).toDouble() } ?: emptyMap()
+            InitialStateNodeDTO(node, mode, params)
+        },
     )
 
     fun fromCreateDTO(req: ScenarioCreateDTO): Scenario = Scenario(
@@ -261,6 +277,13 @@ object DTOMapper {
             )
         },
         bankHints = req.hints?.map { ru.itcamp.elouav.scenario.model.Hint(it.key, it.text) } ?: emptyList(),
+        setup = ru.itcamp.elouav.scenario.model.ScenarioSetup(
+            initialState = if (req.initialState.isNullOrEmpty()) "cold" else "warm",
+            nodesOverride = (req.initialState ?: emptyList()).associate { it.node to mapOf(
+                "mode" to it.mode,
+                "parameters" to it.parameters,
+            ) },
+        ),
     )
 
     fun toStepDTO(step: SimulationStep): SimulationStepDTO = SimulationStepDTO(
