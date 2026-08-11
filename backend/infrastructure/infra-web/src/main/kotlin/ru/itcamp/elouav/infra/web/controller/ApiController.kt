@@ -120,7 +120,7 @@ class ApiController(
     @PostMapping("/sessions")
     fun startSession(
         @RequestBody req: StartSessionRequestDTO,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<SessionDTO> {
         if (req.scenarioId.isBlank()) {
             throw IllegalArgumentException("scenarioId не может быть пустым")
@@ -171,7 +171,7 @@ class ApiController(
     @GetMapping("/sessions/{id}")
     fun getSession(
         @PathVariable id: String,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<SessionDTO> {
         val session = sessionStore.get(SessionId(id))
             ?: return ResponseEntity.notFound().build()
@@ -193,7 +193,7 @@ class ApiController(
     fun applyAction(
         @PathVariable id: String,
         @RequestBody req: ActionRequestDTO,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<SimulationStepDTO> {
         if (req.node.isBlank()) {
             throw IllegalArgumentException("node не может быть пустым")
@@ -288,7 +288,7 @@ class ApiController(
     @PostMapping("/sessions/{id}/end")
     fun endSession(
         @PathVariable id: String,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<VerdictDTO> {
         val session = sessionStore.get(SessionId(id))
             ?: throw NoSuchElementException("Сессия $id не найдена")
@@ -340,11 +340,11 @@ class ApiController(
     }
 
     @GetMapping("/sessions")
-    fun listSessions(authentication: Authentication): ResponseEntity<List<SessionInfoDTO>> {
+    fun listSessions(authentication: Authentication?): ResponseEntity<List<SessionInfoDTO>> {
         val currentUserId = AuthUserIdResolver.resolveUserId(authentication)
             ?: return ResponseEntity.status(401).build()
 
-        val isAdmin = authentication.authorities.any { it.authority.equals("ROLE_admin", ignoreCase = true) }
+        val isAdmin = authentication?.authorities?.any { it.authority.equals("ROLE_admin", ignoreCase = true) } == true
         val sessions = sessionStore.all()
             .filter { isAdmin || it.userId == UserId(currentUserId) }
             .sortedByDescending { it.startedAt }
@@ -383,7 +383,7 @@ class ApiController(
     @GetMapping("/sessions/{id}/state")
     fun getSessionState(
         @PathVariable id: String,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<GraphDTO> {
         val session = sessionStore.get(SessionId(id))
             ?: throw NoSuchElementException("Сессия $id не найдена")
@@ -466,13 +466,13 @@ class ApiController(
     @PostMapping("/ai/scenario-draft")
     fun generateScenarioDraft(
         @RequestBody req: ScenarioDraftRequestDTO,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<ScenarioDraftDTO> {
         if (!isAiAllowed(authentication)) {
             return ResponseEntity.status(403).build()
         }
 
-        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication.name
+        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication?.name ?: "anonymous"
         if (!aiRateLimiter.allow(clientKey)) {
             log.warn("[AI rate-limit] blocked client={} for scenario-draft", clientKey)
             return ResponseEntity.status(429).build()
@@ -538,13 +538,13 @@ class ApiController(
     @PostMapping("/ai/explain-action")
     fun explainAction(
         @RequestBody req: ExplainActionRequestDTO,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<ExplainActionDTO> {
         if (!isAiAllowed(authentication)) {
             return ResponseEntity.status(403).build()
         }
 
-        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication.name
+        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication?.name ?: "anonymous"
         if (!aiRateLimiter.allow(clientKey)) {
             log.warn("[AI rate-limit] blocked client={} for explain-action", clientKey)
             return ResponseEntity.status(429).build()
@@ -587,13 +587,13 @@ class ApiController(
     @PostMapping("/ai/session-analysis")
     fun analyzeSession(
         @RequestBody req: SessionAnalysisRequestDTO,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<SessionAnalysisDTO> {
         if (!isAiAllowed(authentication)) {
             return ResponseEntity.status(403).build()
         }
 
-        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication.name
+        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication?.name ?: "anonymous"
         if (!aiRateLimiter.allow(clientKey)) {
             log.warn("[AI rate-limit] blocked client={} for session-analysis", clientKey)
             return ResponseEntity.status(429).build()
@@ -658,7 +658,7 @@ class ApiController(
     @GetMapping("/sessions/{id}/hint")
     fun getContextHint(
         @PathVariable id: String,
-        authentication: Authentication,
+        authentication: Authentication?,
     ): ResponseEntity<Map<String, Any>> {
         val session = sessionStore.get(SessionId(id))
             ?: throw NoSuchElementException("Сессия $id не найдена")
@@ -680,9 +680,9 @@ class ApiController(
         return ResponseEntity.ok(hint)
     }
 
-    private fun isSessionAccessible(session: Session, authentication: Authentication): Boolean {
+    private fun isSessionAccessible(session: Session, authentication: Authentication?): Boolean {
         val currentUserId = AuthUserIdResolver.resolveUserId(authentication) ?: return false
-        val isAdmin = authentication.authorities.any { it.authority.equals("ROLE_admin", ignoreCase = true) }
+        val isAdmin = authentication?.authorities?.any { it.authority.equals("ROLE_admin", ignoreCase = true) } == true
         return isAdmin || session.userId == UserId(currentUserId)
     }
 
@@ -770,8 +770,8 @@ class ApiController(
         return g
     }
 
-    private fun isAiAllowed(authentication: Authentication): Boolean {
-        if (!authentication.isAuthenticated) {
+    private fun isAiAllowed(authentication: Authentication?): Boolean {
+        if (authentication == null || !authentication.isAuthenticated) {
             return false
         }
         val isAdmin = authentication.authorities.any { it.authority.equals("ROLE_admin", ignoreCase = true) }
@@ -787,8 +787,8 @@ class ApiController(
         return values.all { it == null || it.length <= maxTextLength }
     }
 
-    private fun hasWriteAccess(authentication: Authentication): Boolean {
-        val authorities = authentication.authorities.map { it.authority.lowercase() }
+    private fun hasWriteAccess(authentication: Authentication?): Boolean {
+        val authorities = authentication?.authorities?.map { it.authority.lowercase() } ?: emptyList()
         return authorities.contains("role_methodist") || authorities.contains("role_instructor") || authorities.contains("role_admin")
     }
 
