@@ -2,6 +2,7 @@ package ru.itcamp.elouav.infra.web.controller
 
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ResponseEntity
+import org.springframework.security.access.AccessDeniedException
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.*
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -608,8 +609,6 @@ class ApiController(
         if (!isPayloadWithinLimits(req.sessionId, maxTextLength = 80, maxPayloadSize = 2000)) {
             return ResponseEntity.status(413).build()
         }
-
-        val sanitizedSessionId = PromptSanitizer.sanitize(req.sessionId, maxLength = 80)
 
         log.info("[AI session-analysis] sessionId={} user={} scenario={} score={}",
             req.sessionId, session.userId.value, session.scenarioId.value, session.verdict?.score?.total)
