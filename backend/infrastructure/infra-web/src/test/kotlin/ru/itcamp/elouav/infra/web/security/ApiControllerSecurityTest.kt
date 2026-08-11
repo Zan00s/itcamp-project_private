@@ -20,7 +20,6 @@ class ApiControllerSecurityTest {
     @Test
     fun `resolver extracts user id from a authenticated principal`() {
         val authentication = UsernamePasswordAuthenticationToken("principal", "credential", listOf(SimpleGrantedAuthority("ROLE_student")))
-        authentication.isAuthenticated = true
 
         assertEquals("principal", AuthUserIdResolver.resolveUserId(authentication))
     }
