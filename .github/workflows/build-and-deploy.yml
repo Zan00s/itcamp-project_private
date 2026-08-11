@@ -2,14 +2,53 @@ name: Build and deploy
 
 on:
   push:
+    branches:
+      - security_branch
+      - main
+  pull_request:
+    branches:
+      - security_branch
+      - main
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  ci-checks:
+    name: Backend and frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Run backend tests
+        working-directory: backend
+        run: ./gradlew test
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
   build-and-push:
     name: Build and push images
+    needs: ci-checks
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,6 +119,7 @@ jobs:
   deploy:
     name: Deploy on it-camp-main
     needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: [self-hosted, Linux, X64, gpu, main]
     permissions:
       contents: read
