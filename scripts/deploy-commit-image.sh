@@ -29,8 +29,12 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  echo "ERROR: docker compose plugin is not available." >&2
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker-compose)
+else
+  echo "ERROR: neither 'docker compose' nor 'docker-compose' is available." >&2
   exit 1
 fi
 
@@ -52,9 +56,9 @@ fi
 docker network inspect nginx >/dev/null 2>&1 || docker network create nginx
 docker network inspect ai >/dev/null 2>&1 || docker network create ai
 
-docker compose pull backend frontend
-docker compose up -d --remove-orphans
-docker compose ps
+"${COMPOSE_CMD[@]}" pull backend frontend
+"${COMPOSE_CMD[@]}" up -d --remove-orphans
+"${COMPOSE_CMD[@]}" ps
 
 echo
 echo "Deployed commit SHA: ${COMMIT_SHA}"
