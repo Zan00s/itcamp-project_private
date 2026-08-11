@@ -12,6 +12,7 @@ target/
 # === Kotlin/JVM ===
 *.class
 *.jar
+!backend/gradle/wrapper/gradle-wrapper.jar
 hs_err_pid*
 
 # === Node/Frontend ===
