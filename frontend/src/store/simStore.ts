@@ -95,7 +95,7 @@ export const useSimStore = create<SimState>((set, get) => ({
       const graph = await apiClient.getSessionState(session.id);
 
       set((state) => ({
-        graph,
+        graph: graph && graph.nodes ? graph : state.graph,
         loading: false,
         journal: [
           ...state.journal,
@@ -105,7 +105,7 @@ export const useSimStore = create<SimState>((set, get) => ({
             action: step.action,
             value: step.value,
             result: step.validationResult,
-            chain: step.chain,
+            chain: step.chain || [],
           },
         ],
       }));
@@ -133,26 +133,28 @@ export const useSimStore = create<SimState>((set, get) => ({
   clearError: () => set({ error: null }),
 
   pollEvents: async () => {
-    const { session, journal } = get();
+    const { session } = get();
     if (!session) return;
     try {
       const events = await apiClient.getSessionEvents(session.id);
-      const knownTimestamps = new Set(journal.filter(j => j.isAuto).map(j => j.timestamp));
-      const newEvents: JournalEntry[] = events
-        .filter(e => !knownTimestamps.has(e.timestamp))
-        .map(e => ({
-          timestamp: e.timestamp,
-          node: e.node,
-          action: e.action,
-          value: e.value,
-          result: e.result || 'Alarm',
-          chain: [],
-          eventType: e.eventType,
-          isAuto: true,
-        }));
-      if (newEvents.length > 0) {
-        set({ journal: [...journal, ...newEvents].sort((a, b) => a.timestamp - b.timestamp) });
-      }
+      if (!events || events.length === 0) return;
+      set((state) => {
+        const knownTimestamps = new Set(state.journal.filter(j => j.isAuto).map(j => j.timestamp));
+        const newEvents: JournalEntry[] = events
+          .filter(e => !knownTimestamps.has(e.timestamp))
+          .map(e => ({
+            timestamp: e.timestamp,
+            node: e.node,
+            action: e.action,
+            value: e.value,
+            result: e.result || 'Alarm',
+            chain: [],
+            eventType: e.eventType,
+            isAuto: true,
+          }));
+        if (newEvents.length === 0) return {};
+        return { journal: [...state.journal, ...newEvents].sort((a, b) => a.timestamp - b.timestamp) };
+      });
     } catch {
       // ignore polling errors
     }
