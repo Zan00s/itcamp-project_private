@@ -54,6 +54,8 @@ class ApiController(
     private val llmChat: LLMChat,
     private val examAssignmentStore: ExamAssignmentStore,
     @Value("\${KEYCLOAK_URL:http://localhost:8180}") private val keycloakUrl: String,
+    @Value("\${SPRING_PROFILES_ACTIVE:}") private val activeProfilesRaw: String,
+    @Value("\${DEV_FALLBACK_USER_ID:instructor}") private val devFallbackUserId: String,
 ) {
 
     private val log = LoggerFactory.getLogger("ru.itcamp.elouav.api")
@@ -126,7 +128,7 @@ class ApiController(
             throw IllegalArgumentException("scenarioId не может быть пустым")
         }
 
-        val userId = AuthUserIdResolver.resolveUserId(authentication)
+        val userId = resolveUserId(authentication)
             ?: throw IllegalStateException("Пользователь не аутентифицирован")
 
         if (userId.isBlank()) {
@@ -341,7 +343,7 @@ class ApiController(
 
     @GetMapping("/sessions")
     fun listSessions(authentication: Authentication?): ResponseEntity<List<SessionInfoDTO>> {
-        val currentUserId = AuthUserIdResolver.resolveUserId(authentication)
+        val currentUserId = resolveUserId(authentication)
             ?: return ResponseEntity.status(401).build()
 
         val isAdmin = authentication?.authorities?.any { it.authority.equals("ROLE_admin", ignoreCase = true) } == true
@@ -681,7 +683,11 @@ class ApiController(
     }
 
     private fun isSessionAccessible(session: Session, authentication: Authentication?): Boolean {
-        val currentUserId = AuthUserIdResolver.resolveUserId(authentication) ?: return false
+        if (isDevMode() && authentication == null) {
+            return true
+        }
+
+        val currentUserId = resolveUserId(authentication) ?: return false
         val isAdmin = authentication?.authorities?.any { it.authority.equals("ROLE_admin", ignoreCase = true) } == true
         return isAdmin || session.userId == UserId(currentUserId)
     }
@@ -771,6 +777,9 @@ class ApiController(
     }
 
     private fun isAiAllowed(authentication: Authentication?): Boolean {
+        if (isDevMode()) {
+            return true
+        }
         if (authentication == null || !authentication.isAuthenticated) {
             return false
         }
@@ -788,8 +797,34 @@ class ApiController(
     }
 
     private fun hasWriteAccess(authentication: Authentication?): Boolean {
+        if (isDevMode()) {
+            return true
+        }
         val authorities = authentication?.authorities?.map { it.authority.lowercase() } ?: emptyList()
         return authorities.contains("role_methodist") || authorities.contains("role_instructor") || authorities.contains("role_admin")
+    }
+
+    private fun isDevMode(): Boolean {
+        return activeProfilesRaw
+            .split(',')
+            .map { it.trim() }
+            .any { it.equals("dev", ignoreCase = true) }
+    }
+
+    private fun resolveUserId(authentication: Authentication?): String? {
+        val resolved = AuthUserIdResolver.resolveUserId(authentication)
+        if (resolved != null) {
+            return resolved
+        }
+
+        if (isDevMode()) {
+            val fallback = devFallbackUserId.trim()
+            if (fallback.isNotEmpty()) {
+                return fallback
+            }
+        }
+
+        return null
     }
 
     private fun extractJson(input: String): String {
