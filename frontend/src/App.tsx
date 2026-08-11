@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import OperatorScreen from './pages/OperatorScreen';
 import ResultsScreen from './pages/ResultsScreen';
 import CallbackPage from './pages/CallbackPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState<boolean | null>(null);
@@ -34,7 +35,7 @@ export default function App() {
       <Routes>
         <Route path="/callback" element={<CallbackPage />} />
         <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/operator/:sessionId" element={<ProtectedRoute><OperatorScreen /></ProtectedRoute>} />
+        <Route path="/operator/:sessionId" element={<ProtectedRoute><ErrorBoundary><OperatorScreen /></ErrorBoundary></ProtectedRoute>} />
         <Route path="/results/:sessionId" element={<ProtectedRoute><ResultsScreen /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

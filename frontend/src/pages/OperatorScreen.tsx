@@ -165,7 +165,7 @@ export default function OperatorScreen() {
     if (!sessionId) return;
     const pollInterval = setInterval(() => {
       useSimStore.getState().pollEvents();
-      apiClient.getSessionState(sessionId).then(g => useSimStore.setState({ graph: g })).catch(() => {});
+      apiClient.getSessionState(sessionId).then(g => { if (g && g.nodes) useSimStore.setState({ graph: g }); }).catch(() => {});
     }, 5000);
     return () => clearInterval(pollInterval);
   }, [sessionId]);
@@ -296,14 +296,14 @@ export default function OperatorScreen() {
                 <Text size="s" view="ghost">Тип: {TYPE_LABELS[selectedNodeData.type] || selectedNodeData.type} | Режим: {MODE_LABELS[selectedNodeData.mode] || selectedNodeData.mode}</Text>
               </div>
               <Card verticalSpace="s" horizontalSpace="m" style={{ background: '#f5f5f5' }}>
-                {Object.entries(selectedNodeData.parameters).map(([k, v]) => (
+                {Object.entries(selectedNodeData.parameters || {}).map(([k, v]) => (
                   <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <Text size="s" view="ghost">{selectedNodeData.paramLabels?.[k] || paramLabel(k)}:</Text>
-                    <Text size="s" weight="semibold">{v.toFixed(2)}</Text>
+                    <Text size="s" weight="semibold">{Number(v || 0).toFixed(2)}</Text>
                   </div>
                 ))}
               </Card>
-              {selectedNodeData.actions.map((action) => {
+              {(selectedNodeData.actions || []).map((action) => {
                 const isStart = action.id === 'start';
                 const isStop = action.id === 'stop';
                 const isRunning = selectedNodeData.mode === 'RUNNING';
@@ -367,12 +367,12 @@ export default function OperatorScreen() {
                     ? <Text size="xs" weight="semibold" style={{ color: '#ff4d4f' }}>⚠ АВАРИЯ</Text>
                     : <Text size="xs" weight="semibold" style={{ color: '#faad14' }}>⚠ ПРЕДУПРЕЖДЕНИЕ</Text>
                   )}
-                  <Text size="m"><strong>{NODE_LABELS[entry.node] || entry.node}</strong>: {actionLabel(entry.action)}{entry.value !== null && ` = ${entry.value.toFixed(1)}`}</Text>
+                  <Text size="m"><strong>{NODE_LABELS[entry.node] || entry.node}</strong>: {actionLabel(entry.action)}{entry.value != null && ` = ${Number(entry.value).toFixed(1)}`}</Text>
                   {!entry.isAuto && <Text size="xs" view="ghost">Результат: {RESULT_LABELS[entry.result] || entry.result}</Text>}
-                  {entry.chain.length > 0 && (
+                  {(entry.chain || []).length > 0 && (
                     <div style={{ marginTop: 4, padding: 4, background: '#f0f9eb', borderRadius: 4 }}>
                       <Text size="xs" weight="semibold" style={{ color: '#52c41a' }}>Каскадное влияние:</Text>
-                      {entry.chain.map((c, ci) => (
+                      {(entry.chain || []).map((c, ci) => (
                         <Text key={ci} size="xs">
                           {ci > 0 && ' → '}
                           <span style={{ color: '#1677ff' }}>{NODE_LABELS[c.node] || c.node}</span>
@@ -452,7 +452,7 @@ function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect }: {
   const svgH = 760;
   const pipeY = 180;
 
-  const getNode = (nodeId: string) => graph?.nodes.find((n: any) => n.id === nodeId);
+  const getNode = (nodeId: string) => (graph?.nodes || []).find((n: any) => n.id === nodeId);
   const isRunning = (nodeId: string) => getNode(nodeId)?.mode === 'RUNNING';
   const isAlarm = (nodeId: string) => getNode(nodeId)?.mode === 'ALARM';
   const statusColor = (n: any) => n ? (n.mode === 'RUNNING' ? c.activeGreen : n.mode === 'ALARM' ? c.alarmRed : c.stoppedGray) : c.stoppedGray;
@@ -488,7 +488,7 @@ function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect }: {
       <g>
         <rect x={x} y={y} width="78" height="30" rx="2" fill={c.paramBg} stroke={c.paramBorder} strokeWidth="1" />
         <text x={x + 39} y={y + 11} textAnchor="middle" fill={c.textSec} fontSize="7" fontWeight="bold" fontFamily={FONT_FAMILY}>{tag}</text>
-        <text x={x + 39} y={y + 24} textAnchor="middle" fill={vcolor} fontSize="10" fontWeight="bold" fontFamily={FONT_FAMILY}>{value.toFixed(1)} {unit}</text>
+        <text x={x + 39} y={y + 24} textAnchor="middle" fill={vcolor} fontSize="10" fontWeight="bold" fontFamily={FONT_FAMILY}>{Number(value || 0).toFixed(1)} {unit}</text>
       </g>
     );
   };
@@ -629,7 +629,7 @@ function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect }: {
       {paramBlock(748, 456, 'PRC-313', getNode('tank')?.parameters?.drain_flow || 0, 'м³/ч', isRunning('tank'))}
 
       {/* === EQUIPMENT === */}
-      {graph?.nodes.map((node: any) => {
+      {(graph?.nodes || []).map((node: any) => {
         const isSel = selectedNode === node.id;
         const isHi = highlightedNodes.has(node.id);
         const stColor = statusColor(node);
@@ -757,7 +757,7 @@ function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect }: {
             <polygon points={`${vx + 10},${vy - 10} ${vx + 10},${vy + 10} ${vx},${vy}`} fill={c.equipDark} stroke={c.equipStroke} strokeWidth="1.2" />
             {open && <rect x={vx - 2} y={vy - 18} width="4" height="8" fill={c.activeGreen} />}
             {!open && vp === 0 && <rect x={vx - 2} y={vy - 18} width="4" height="8" fill={c.alarmRed} />}
-            <text x={vx} y={vy - 22} textAnchor="middle" fill={c.textSec} fontSize="7" fontFamily={FONT_FAMILY}>{vp.toFixed(0)}%</text>
+            <text x={vx} y={vy - 22} textAnchor="middle" fill={c.textSec} fontSize="7" fontFamily={FONT_FAMILY}>{Number(vp || 0).toFixed(0)}%</text>
           </g>
         );
       })()}
