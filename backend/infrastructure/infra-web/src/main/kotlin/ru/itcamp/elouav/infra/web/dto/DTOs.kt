@@ -203,6 +203,20 @@ data class SessionAnalysisDTO(
     val error: Boolean = false,
 )
 
+data class ExamAssignmentDTO(
+    val id: String,
+    val scenarioId: String,
+    val scenarioName: String,
+    val studentId: String,
+    val assignedBy: String,
+    val assignedAt: String,
+)
+
+data class ExamAssignmentRequestDTO(
+    val scenarioId: String,
+    val studentId: String,
+)
+
 object DTOMapper {
     fun toGraphDTO(graph: Graph): GraphDTO = GraphDTO(
         nodes = graph.nodes.values.map { toNodeDTO(it) },

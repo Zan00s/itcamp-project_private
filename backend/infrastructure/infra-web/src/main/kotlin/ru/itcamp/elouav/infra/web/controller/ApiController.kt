@@ -26,6 +26,7 @@ import ru.itcamp.elouav.audit.port.AuditRepository
 import ru.itcamp.elouav.infra.web.dto.*
 import ru.itcamp.elouav.infra.web.security.AiRequestRateLimiter
 import ru.itcamp.elouav.infra.web.security.PromptSanitizer
+import ru.itcamp.elouav.infra.web.exam.ExamAssignmentStore
 import ru.itcamp.elouav.scoring.model.ScoringProfile
 import ru.itcamp.elouav.shared.*
 import ru.itcamp.elouav.sim.model.ActionRequest
@@ -50,6 +51,7 @@ class ApiController(
     private val deleteScenarioUseCase: DeleteScenarioUseCase,
     private val scoreAttemptUseCase: ScoreAttemptUseCase,
     private val llmChat: LLMChat,
+    private val examAssignmentStore: ExamAssignmentStore,
     @Value("\${KEYCLOAK_URL:http://localhost:8180}") private val keycloakUrl: String,
 ) {
 
@@ -485,9 +487,9 @@ class ApiController(
         val systemPrompt = """
             Ты — методист тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
             Создай черновик сценария обучения в формате JSON.
-            Узлы графа: feed_pump (насос Н-82), preheater (теплообменник А-19), dehydrator (дегидратор Э-1), furnace (печь), tank (ёмкость Е-16), regulator (регулятор Р-11).
-            Действия: start, stop, set_power (0-100), set_temp (20-400), set_valve (0-100).
-            Параметры узлов: power_percent, flow_rate, temperature, water_content, salt_mg_l, level, valve_pos.
+            Узлы графа: feed_pump (насос Н-82), preheater (смеситель А-19), dehydrator (электродегидратор Э-1), tank (ёмкость Е-16), regulator (регулятор Р-11), output (выход).
+            Действия: start, stop, set_power (0-100), set_temp (20-140), set_valve (0-100), set_voltage (0-1), increase_drain.
+            Параметры узлов: power_percent, flow_rate, temperature, pressure, level_mm, voltage_on, water_content, salt_mg_l, level, valve_pos.
             Режимы узлов: RUNNING (работает), STOPPED (остановлен).
             Ответь СТРОГО в JSON без markdown-обрамления и без пояснений.
             JSON-схема: {"name":"...","timeoutSec":1800,"difficulty":2,"initialState":[{"node":"feed_pump","mode":"RUNNING","parameters":{"power_percent":80}}],"phases":[{"id":"ph1","title":"...","expectedActions":[{"node":"feed_pump","action":"start","value":null}]}],"hints":[{"key":"ph1","text":"..."}]}
@@ -691,6 +693,8 @@ class ApiController(
         "set_power" to "Мощность, %",
         "set_temp" to "Температура, °C",
         "set_valve" to "Клапан, %",
+        "set_voltage" to "Подача напряжения",
+        "increase_drain" to "Увеличить сброс в Е-16",
     )
 
     private fun actionLabelRu(actionId: String): String = actionLabelsRu[actionId] ?: actionId
@@ -701,7 +705,6 @@ class ApiController(
         "dehydrator" to "Э-1",
         "tank" to "Е-16",
         "regulator" to "Р-11",
-        "furnace" to "Печь",
         "output" to "Выход",
     )
 
@@ -801,5 +804,98 @@ class ApiController(
         val jsonStart = s.indexOf("{")
         val jsonEnd = s.lastIndexOf("}")
         return if (jsonStart >= 0 && jsonEnd > jsonStart) s.substring(jsonStart, jsonEnd + 1) else s
+    }
+
+    // === Exam assignments (instructor → student) ===
+
+    @PostMapping("/exam-assignments")
+    fun assignExam(
+        @RequestBody req: ExamAssignmentRequestDTO,
+        @RequestHeader("X-User-Id") instructorId: String,
+    ): ResponseEntity<ExamAssignmentDTO> {
+        if (req.scenarioId.isBlank() || req.studentId.isBlank()) {
+            throw IllegalArgumentException("scenarioId и studentId обязательны")
+        }
+        val scenarioResult = loadScenarioUseCase.execute(ScenarioId(req.scenarioId))
+        if (scenarioResult is AppResult.Err) {
+            throw NoSuchElementException("Сценарий ${req.scenarioId} не найден")
+        }
+        val dto = examAssignmentStore.assign(req.scenarioId, req.studentId, instructorId)
+        return ResponseEntity.ok(dto)
+    }
+
+    @GetMapping("/exam-assignments")
+    fun listExamAssignments(
+        @RequestParam(required = false) studentId: String?,
+    ): ResponseEntity<List<ExamAssignmentDTO>> {
+        val list = if (studentId != null) {
+            examAssignmentStore.listForStudent(studentId)
+        } else {
+            examAssignmentStore.listAll()
+        }
+        return ResponseEntity.ok(list)
+    }
+
+    @DeleteMapping("/exam-assignments/{id}")
+    fun removeExamAssignment(@PathVariable id: String): ResponseEntity<Map<String, String>> {
+        val removed = examAssignmentStore.remove(id)
+        if (!removed) {
+            throw NoSuchElementException("Назначение $id не найдено")
+        }
+        return ResponseEntity.ok(mapOf("status" to "deleted", "id" to id))
+    }
+
+    @GetMapping("/keycloak/users")
+    fun listKeycloakUsers(): ResponseEntity<List<Map<String, String>>> {
+        return try {
+            val token = getKeycloakAdminToken()
+            val client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(5))
+                .build()
+            val request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create("$keycloakUrl/admin/realms/elouav/users?max=100"))
+                .timeout(java.time.Duration.ofSeconds(10))
+                .header("Authorization", "Bearer $token")
+                .GET()
+                .build()
+            val response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() in 200..299) {
+                val users: List<Map<String, Any>> = jacksonObjectMapper().readValue(response.body())
+                val result = users.map { u ->
+                    mapOf(
+                        "id" to (u["id"] as? String ?: ""),
+                        "username" to (u["username"] as? String ?: ""),
+                        "firstName" to (u["firstName"] as? String ?: ""),
+                        "lastName" to (u["lastName"] as? String ?: ""),
+                        "email" to (u["email"] as? String ?: ""),
+                    )
+                }
+                ResponseEntity.ok(result)
+            } else {
+                ResponseEntity.ok(emptyList())
+            }
+        } catch (e: Exception) {
+            log.warn("[keycloak-users] error: {}", e.message)
+            ResponseEntity.ok(emptyList())
+        }
+    }
+
+    private fun getKeycloakAdminToken(): String {
+        val client = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .build()
+        val body = "client_id=admin-cli&username=admin&password=admin&grant_type=password"
+        val request = java.net.http.HttpRequest.newBuilder()
+            .uri(java.net.URI.create("$keycloakUrl/realms/master/protocol/openid-connect/token"))
+            .timeout(java.time.Duration.ofSeconds(10))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+            .build()
+        val response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Keycloak admin token failed: ${response.statusCode()}")
+        }
+        val json: Map<String, Any> = jacksonObjectMapper().readValue(response.body())
+        return json["access_token"] as String
     }
 }
