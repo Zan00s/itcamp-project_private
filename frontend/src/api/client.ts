@@ -152,6 +152,23 @@ export interface SessionInfoDTO {
   verdict: VerdictDTO | null;
 }
 
+export interface ExamAssignmentDTO {
+  id: string;
+  scenarioId: string;
+  scenarioName: string;
+  studentId: string;
+  assignedBy: string;
+  assignedAt: string;
+}
+
+export interface KeycloakUserDTO {
+  id: string;
+  username: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
 export const apiClient = {
   async getGraph(install = 'ELOU-AV'): Promise<GraphDTO> {
     const { data } = await api.get('/graph', { params: { install } });
@@ -239,6 +256,26 @@ export const apiClient = {
 
   async analyzeSession(sessionId: string): Promise<{ text: string; recommendations: string[]; isAI: boolean; error: boolean }> {
     const { data } = await api.post('/ai/session-analysis', { sessionId });
+    return data;
+  },
+
+  async listExamAssignments(studentId?: string): Promise<ExamAssignmentDTO[]> {
+    const params = studentId ? { studentId } : {};
+    const { data } = await api.get('/exam-assignments', { params });
+    return data;
+  },
+
+  async assignExam(scenarioId: string, studentId: string): Promise<ExamAssignmentDTO> {
+    const { data } = await api.post('/exam-assignments', { scenarioId, studentId });
+    return data;
+  },
+
+  async removeExamAssignment(id: string): Promise<void> {
+    await api.delete(`/exam-assignments/${id}`);
+  },
+
+  async listKeycloakUsers(): Promise<KeycloakUserDTO[]> {
+    const { data } = await api.get('/keycloak/users');
     return data;
   },
 };

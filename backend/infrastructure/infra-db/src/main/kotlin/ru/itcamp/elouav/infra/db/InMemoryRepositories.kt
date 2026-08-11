@@ -89,7 +89,7 @@ class InMemoryGraphRepository(
             val preheater = Node(
                 id = NodeId("preheater"),
                 type = "preheater",
-                name = "А-19 Теплообменник",
+                name = "А-19 Смеситель",
                 inputs = listOf(PortId("flow-in")),
                 outputs = listOf(PortId("flow-out"), PortId("temp-out")),
                 state = NodeState(
@@ -97,7 +97,7 @@ class InMemoryGraphRepository(
                     parameters = mapOf("inlet_flow" to 0.0, "temperature" to 20.0),
                 ),
                 actions = listOf(
-                    Action("set_temp", "Установить температуру, °C", "temperature", 20.0..180.0),
+                    Action("set_temp", "Установить температуру, °C", "temperature", 20.0..140.0),
                     Action("start", "Пуск"),
                     Action("stop", "Остановка"),
                 ),
@@ -106,39 +106,11 @@ class InMemoryGraphRepository(
                         deps = listOf("input.flow-in")),
                     BehaviorRule("b_temp", "temperature", "20.0 + inlet_flow * 2.0",
                         deps = listOf("inlet_flow"),
-                        constraints = Constraint(max = 180.0, onViolate = ViolateAction.ALARM)),
+                        constraints = Constraint(max = 140.0, onViolate = ViolateAction.ALARM)),
                 ),
                 paramLabels = mapOf(
                     "inlet_flow" to "Входной расход, м³/ч",
                     "temperature" to "Температура, °C",
-                ),
-            )
-
-            val furnace = Node(
-                id = NodeId("furnace"),
-                type = "furnace",
-                name = "Печь подогрева",
-                inputs = listOf(PortId("flow-in")),
-                outputs = listOf(PortId("temp-out")),
-                state = NodeState(
-                    mode = NodeMode.STOPPED,
-                    parameters = mapOf("temperature" to 20.0, "inlet_flow" to 0.0),
-                ),
-                actions = listOf(
-                    Action("set_temp", "Установить температуру, °C", "temperature", 20.0..400.0),
-                    Action("start", "Пуск"),
-                    Action("stop", "Остановка"),
-                ),
-                behavior = listOf(
-                    BehaviorRule("b_iflow", "inlet_flow", "input.flow-in",
-                        deps = listOf("input.flow-in")),
-                    BehaviorRule("b_temp", "temperature", "300.0 + inlet_flow * 0.5",
-                        deps = listOf("inlet_flow"),
-                        constraints = Constraint(max = 400.0, onViolate = ViolateAction.ALARM)),
-                ),
-                paramLabels = mapOf(
-                    "temperature" to "Температура, °C",
-                    "inlet_flow" to "Входной расход, м³/ч",
                 ),
             )
 
@@ -153,6 +125,9 @@ class InMemoryGraphRepository(
                     parameters = mapOf(
                         "inlet_flow" to 0.0,
                         "inlet_temp" to 20.0,
+                        "pressure" to 0.0,
+                        "level_mm" to 4000.0,
+                        "voltage_on" to 0.0,
                         "water_content" to 5.0,
                         "salt_mg_l" to 50.0,
                     ),
@@ -160,18 +135,28 @@ class InMemoryGraphRepository(
                 actions = listOf(
                     Action("start", "Пуск"),
                     Action("stop", "Остановка"),
+                    Action("set_valve", "Задвижка входа нефти, %", "inlet_valve", 0.0..100.0),
+                    Action("set_voltage", "Подача напряжения", "voltage_on", 0.0..1.0),
+                    Action("increase_drain", "Увеличить сброс в Е-16"),
                 ),
                 behavior = listOf(
                     BehaviorRule("b_iflow", "inlet_flow", "input.flow-in"),
                     BehaviorRule("b_itemp", "inlet_temp", "input.temp-in"),
+                    BehaviorRule("b_pressure", "pressure", "4.5 + inlet_flow * 0.05",
+                        constraints = Constraint(min = 0.0, max = 10.0, onViolate = ViolateAction.ALARM)),
+                    BehaviorRule("b_level", "level_mm", "4000.0 - drain_flow * 10.0",
+                        constraints = Constraint(min = 0.0, onViolate = ViolateAction.ALARM)),
                     BehaviorRule("b_water", "water_content", "5.0 - inlet_temp * 0.01",
                         constraints = Constraint(min = 0.0, onViolate = ViolateAction.CLAMP)),
                     BehaviorRule("b_salt", "salt_mg_l", "50.0 - inlet_temp * 0.1",
                         constraints = Constraint(min = 0.0, onViolate = ViolateAction.CLAMP)),
                 ),
                 paramLabels = mapOf(
-                    "inlet_flow" to "Входной расход, м³/ч",
-                    "inlet_temp" to "Входная температура, °C",
+                    "inlet_flow" to "Расход нефти, м³/ч",
+                    "inlet_temp" to "Температура, °C",
+                    "pressure" to "Давление, кгс/см²",
+                    "level_mm" to "Уровень раздела фаз, мм",
+                    "voltage_on" to "Напряжение на электродах",
                     "water_content" to "Содержание воды, %",
                     "salt_mg_l" to "Содержание солей, мг/л",
                 ),
@@ -255,10 +240,9 @@ class InMemoryGraphRepository(
                 Edge("e5", NodeId("dehydrator"), NodeId("output"), PortId("quality-out"), PortId("quality-in")),
                 Edge("e6", NodeId("dehydrator"), NodeId("tank"), PortId("drain-out"), PortId("drain-in")),
                 Edge("e7", NodeId("tank"), NodeId("regulator"), PortId("flow-out"), PortId("flow-in")),
-                Edge("e8", NodeId("preheater"), NodeId("furnace"), PortId("flow-out"), PortId("flow-in")),
             )
 
-            return Graph.of(listOf(feedPump, preheater, furnace, dehydrator, tank, regulator, output), edges)
+            return Graph.of(listOf(feedPump, preheater, dehydrator, tank, regulator, output), edges)
         }
     }
 }
@@ -304,7 +288,7 @@ class InMemoryScenarioRepository : ScenarioRepository {
             Condition(node = "output", param = "salt_mg_l", op = Operator.LESS_THAN, value = 5.0),
         ),
         failureConditions = listOf(
-            Condition(node = "preheater", param = "temperature", op = Operator.GREATER_THAN, value = 180.0, critical = true),
+            Condition(node = "preheater", param = "temperature", op = Operator.GREATER_THAN, value = 140.0, critical = true),
             Condition(condition = "alarm_activated", critical = true),
         ),
         phases = listOf(
@@ -336,48 +320,55 @@ class InMemoryScenarioRepository : ScenarioRepository {
         difficulty = 1,
         successConditions = listOf(
             Condition(node = "feed_pump", param = "power_percent", op = Operator.LESS_THAN, value = 1.0),
-            Condition(node = "furnace", param = "temperature", op = Operator.LESS_THAN, value = 50.0),
+            Condition(node = "dehydrator", param = "voltage_on", op = Operator.LESS_THAN, value = 0.5),
         ),
         failureConditions = listOf(
-            Condition(node = "furnace", param = "temperature", op = Operator.GREATER_THAN, value = 400.0, critical = true),
+            Condition(node = "dehydrator", param = "pressure", op = Operator.GREATER_THAN, value = 10.0, critical = true),
+            Condition(condition = "alarm_activated", critical = true),
         ),
         phases = listOf(
             Phase("ph1", "Снижение нагрузки", listOf(
-                ExpectedAction("furnace", "set_temp", 50.0),
+                ExpectedAction("dehydrator", "set_voltage", 0.0),
                 ExpectedAction("feed_pump", "set_power", 0.0),
             )),
             Phase("ph2", "Остановка", listOf(
-                ExpectedAction("furnace", "stop"),
+                ExpectedAction("dehydrator", "stop"),
                 ExpectedAction("feed_pump", "stop"),
             )),
         ),
         bankHints = listOf(
-            Hint("ph1", "Плавно снизьте температуру печи и мощность насоса."),
+            Hint("ph1", "Снимите напряжение с электродегидратора и плавно снизьте мощность насоса."),
             Hint("ph2", "Остановите оборудование после снижения параметров."),
         ),
     )
 
     private fun defaultEmergencyScenario(): Scenario = Scenario(
         id = ScenarioId("emergency_pump_failure"),
-        name = "Нештатная ситуация: отказ насоса",
+        name = "Нештатная ситуация: отказ насоса Н-82",
         install = "ELOU-AV",
         timeoutSec = 600,
         difficulty = 3,
         successConditions = listOf(
-            Condition(node = "furnace", param = "temperature", op = Operator.LESS_THAN, value = 100.0),
+            Condition(node = "feed_pump", param = "flow_rate", op = Operator.GREATER_THAN, value = 5.0),
+            Condition(node = "dehydrator", param = "voltage_on", op = Operator.LESS_THAN, value = 0.5),
         ),
         failureConditions = listOf(
-            Condition(node = "furnace", param = "temperature", op = Operator.GREATER_THAN, value = 400.0, critical = true),
+            Condition(node = "dehydrator", param = "level_mm", op = Operator.LESS_THAN, value = 3500.0, critical = true),
             Condition(condition = "alarm_activated", critical = true),
         ),
         phases = listOf(
-            Phase("ph1", "Реакция на отказ", listOf(
-                ExpectedAction("furnace", "set_temp", 50.0),
-                ExpectedAction("furnace", "stop"),
+            Phase("ph1", "Перевод в безопасный режим", listOf(
+                ExpectedAction("dehydrator", "set_voltage", 0.0),
+                ExpectedAction("dehydrator", "increase_drain"),
+            )),
+            Phase("ph2", "Перезапуск насоса", listOf(
+                ExpectedAction("feed_pump", "start"),
+                ExpectedAction("feed_pump", "set_power", 40.0, rampOk = listOf(20.0, 60.0)),
             )),
         ),
         bankHints = listOf(
-            Hint("ph1", "Насос остановлен! Срочно снизьте температуру печи для предотвращения перегрева."),
+            Hint("ph1", "Отказ насоса Н-82! Срочно снимите напряжение с электродегидратора и увеличьте сброс в ёмкость Е-16."),
+            Hint("ph2", "Перезапустите насос Н-82 и выйдите на рабочий режим."),
         ),
     )
 }

@@ -31,9 +31,8 @@ const MODE_LABELS: Record<string, string> = {
 
 const TYPE_LABELS: Record<string, string> = {
   feed_pump: 'Насос',
-  preheater: 'Теплообменник',
-  furnace: 'Печь',
-  electrodehydrator: 'Дегидратор',
+  preheater: 'Смеситель',
+  electrodehydrator: 'Электродегидратор',
   tank: 'Ёмкость',
   regulator: 'Регулятор',
   output: 'Выход',
@@ -52,7 +51,6 @@ const NODE_LABELS: Record<string, string> = {
   dehydrator: 'Э-1',
   tank: 'Е-16',
   regulator: 'Р-11',
-  furnace: 'Печь',
   output: 'Выход',
 };
 
@@ -61,7 +59,9 @@ const ACTION_LABELS: Record<string, string> = {
   stop: 'Остановка',
   set_power: 'Мощность, %',
   set_temp: 'Температура, °C',
-  set_valve: 'Клапан, %',
+  set_valve: 'Задвижка, %',
+  set_voltage: 'Подача напряжения',
+  increase_drain: 'Увеличить сброс в Е-16',
 };
 
 function actionLabel(actionId: string): string {
@@ -75,6 +75,9 @@ const PARAM_LABELS: Record<string, string> = {
   temperature: 'Температура',
   inlet_flow: 'Вх.расход',
   inlet_temp: 'Вх.темп',
+  pressure: 'Давление',
+  level_mm: 'Уровень, мм',
+  voltage_on: 'Напряжение',
   water_content: 'Вода',
   salt_mg_l: 'Соли',
   level: 'Уровень',
@@ -483,7 +486,7 @@ function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect, dark }: 
   };
 
   return (
-    <svg width={svgW} height={svgH} style={{ background: c.bg, borderRadius: 8, minWidth: svgW, border: `1px solid ${dark ? '#1a2332' : '#a0a8b0'}` }}>
+    <svg viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ background: c.bg, borderRadius: 8, width: '100%', height: 'auto', maxWidth: svgW, minHeight: 300, border: `1px solid ${dark ? '#1a2332' : '#a0a8b0'}` }}>
       <defs>
         <pattern id="scadaGrid" width="20" height="20" patternUnits="userSpaceOnUse">
           <path d="M 20 0 L 0 0 0 20" fill="none" stroke={c.grid} strokeWidth="0.5" />
@@ -510,23 +513,15 @@ function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect, dark }: 
       {arrow(860, pipeY, 'right')}
       <text x="868" y="118" fill={c.textSec} fontSize="8" fontFamily="monospace">Частично обезвоженная нефть</text>
 
-      {/* === Below А-19: vertical pipe with blue valve → furnace === */}
-      {pipe(380, 155, 380, 175, isRunning('furnace'), 5)}
-      {/* Blue valve: two triangles pointing at each other */}
-      <polygon points={`365,175 365,195 380,185`} fill={c.valve} stroke={c.valve} strokeWidth="1" />
-      <polygon points={`395,175 395,195 380,185`} fill={c.valve} stroke={c.valve} strokeWidth="1" />
-      {pipe(380, 195, 380, 235, isRunning('furnace'), 5)}
-      {arrow(380, 175, 'up')}
-      <text x="395" y="185" fill={c.textSec} fontSize="7" fontFamily="monospace">Нагретая сырая нефть</text>
-
-      {/* === Below Э-1: vertical pipe down to Е-16 === */}
+      {/* === Below Э-1: vertical pipe down to Е-16 (сброс солёной воды) === */}
       {pipe(640, 165, 640, 290, isRunning('dehydrator'), 5)}
       {arrow(640, 290, 'down')}
-      <text x="648" y="230" fill={c.textSec} fontSize="7" fontFamily="monospace">→ вода</text>
+      <text x="648" y="230" fill={c.textSec} fontSize="7" fontFamily="monospace">сол. вода</text>
 
       {/* === Е-16 → Р-11 (left) === */}
       {pipe(590, 317, 500, 317, isRunning('tank'), 5)}
       {arrow(500, 317, 'left')}
+      <text x="510" y="310" fill={c.textSec} fontSize="7" fontFamily="monospace">нефть</text>
 
       {/* === Below Е-16: vertical pipe down → Стоки === */}
       {pipe(640, 345, 640, 420, isRunning('tank'), 5)}
@@ -585,23 +580,9 @@ function Mnemoscheme({ graph, selectedNode, highlightedNodes, onSelect, dark }: 
               <text x={x + 80} y={y + 80} textAnchor="middle" fill={color} fontSize="8" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
               {instrumentTag(x + 145, y + 5, 'WIT', '301')}
               {instrumentTag(x + 145, y + 60, 'SIT', '302')}
-              {paramBox(x - 20, y + 102, 'ВОДА', p.water_content || 0, '%', node.mode === 'RUNNING')}
-              {paramBox(x + 88, y + 102, 'СОЛИ', p.salt_mg_l || 0, 'мг/л', node.mode === 'RUNNING')}
-            </g>
-          );
-        }
-        if (node.type === 'furnace') {
-          const p = node.parameters;
-          const x = 340, y = 235;
-          return (
-            <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              <rect x={x} y={y} width="80" height="50" rx="4" fill={c.equipFill} stroke={selStroke} strokeWidth={selW} />
-              <path d={`M ${x + 25} ${y + 42} Q ${x + 20} ${y + 25} ${x + 30} ${y + 15} Q ${x + 40} ${y + 25} ${x + 35} ${y + 42}`} fill="none" stroke={c.flame} strokeWidth="1.5" />
-              <path d={`M ${x + 45} ${y + 42} Q ${x + 40} ${y + 25} ${x + 50} ${y + 15} Q ${x + 60} ${y + 25} ${x + 55} ${y + 42}`} fill="none" stroke={c.flame} strokeWidth="1.5" />
-              <text x={x + 40} y={y + 30} textAnchor="middle" fill={c.textMain} fontSize="9" fontWeight="bold">{label}</text>
-              <text x={x + 40} y={y + 66} textAnchor="middle" fill={color} fontSize="7" fontFamily="monospace">{MODE_LABELS[node.mode] || ''}</text>
-              {instrumentTag(x + 70, y - 5, 'TIC', '601')}
-              {paramBox(x - 6, y + 72, 'ТЕМП', p.temperature || 0, '°C', node.mode === 'RUNNING')}
+              {paramBox(x - 40, y + 102, 'ДАВЛ', p.pressure || 0, 'кгс', node.mode === 'RUNNING')}
+              {paramBox(x + 56, y + 102, 'УРОВЕНЬ', p.level_mm || 0, 'мм', node.mode === 'RUNNING')}
+              {paramBox(x + 152, y + 102, 'НАПР', p.voltage_on || 0, '', node.mode === 'RUNNING')}
             </g>
           );
         }

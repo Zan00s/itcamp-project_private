@@ -5,15 +5,16 @@ import { Text } from '@consta/uikit/Text';
 import { Button } from '@consta/uikit/Button';
 import { Badge } from '@consta/uikit/Badge';
 import { Table, TableColumn } from '@consta/uikit/Table';
+import { Select } from '@consta/uikit/Select';
 import { IconRestart } from '@consta/icons/IconRestart';
 import { IconDownload } from '@consta/icons/IconDownload';
 import { IconChatStroked } from '@consta/icons/IconChatStroked';
-import { apiClient, type SessionInfoDTO } from '../api/client';
+import { apiClient, type SessionInfoDTO, type ScenarioDTO, type ExamAssignmentDTO, type KeycloakUserDTO } from '../api/client';
 
 const SCENARIO_NAMES: Record<string, string> = {
   startup: 'Пуск установки',
   shutdown: 'Остановка установки',
-  emergency_pump_failure: 'Нештатная ситуация: отказ насоса',
+  emergency_pump_failure: 'Нештатная ситуация: отказ насоса Н-82',
 };
 
 const VERDICT_LABELS: Record<string, string> = {
@@ -66,12 +67,39 @@ export default function InstructorDashboard() {
   const [sortDir] = useState<SortDir>('asc');
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [scenarios, setScenarios] = useState<ScenarioDTO[]>([]);
+  const [assignments, setAssignments] = useState<ExamAssignmentDTO[]>([]);
+  const [assignScenario, setAssignScenario] = useState<ScenarioDTO | null>(null);
+  const [assignStudent, setAssignStudent] = useState<KeycloakUserDTO | null>(null);
+  const [users, setUsers] = useState<KeycloakUserDTO[]>([]);
 
   useEffect(() => {
     refresh();
+    apiClient.listScenarios().then(setScenarios).catch(() => {});
+    apiClient.listKeycloakUsers().then(setUsers).catch(() => {});
+    refreshAssignments();
     const interval = setInterval(refresh, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  const refreshAssignments = async () => {
+    try { setAssignments(await apiClient.listExamAssignments()); } catch {}
+  };
+
+  const handleAssign = async () => {
+    if (!assignScenario || !assignStudent) return;
+    try {
+      await apiClient.assignExam(assignScenario.id, assignStudent.username);
+      setAssignStudent(null);
+      refreshAssignments();
+    } catch (e: any) {
+      alert('Ошибка назначения: ' + e.message);
+    }
+  };
+
+  const handleRemoveAssignment = async (id: string) => {
+    try { await apiClient.removeExamAssignment(id); refreshAssignments(); } catch {}
+  };
 
   const refresh = async () => {
     try {
@@ -309,6 +337,56 @@ export default function InstructorDashboard() {
           )}
         </Card>
       </div>
+
+      <Card col={1} verticalSpace="l" horizontalSpace="l">
+        <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 12 }}>Назначение экзаменов</Text>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ minWidth: 250 }}>
+            <Text size="s" view="ghost" style={{ marginBottom: 4 }}>Сценарий</Text>
+            <Select
+              items={scenarios}
+              value={assignScenario}
+              onChange={(value) => setAssignScenario(value as ScenarioDTO | null)}
+              getItemKey={(s: ScenarioDTO) => s.id}
+              getItemLabel={(s: ScenarioDTO) => s.name}
+              placeholder="Выберите сценарий"
+            />
+          </div>
+          <div style={{ minWidth: 250 }}>
+            <Text size="s" view="ghost" style={{ marginBottom: 4 }}>Студент</Text>
+            <Select
+              items={users}
+              value={assignStudent}
+              onChange={(value) => setAssignStudent(value as KeycloakUserDTO | null)}
+              getItemKey={(u: KeycloakUserDTO) => u.id}
+              getItemLabel={(u: KeycloakUserDTO) => `${u.username}${u.firstName ? ' - ' + u.firstName + ' ' + u.lastName : ''}`}
+              placeholder="Выберите студента"
+            />
+          </div>
+          <Button
+            label="Назначить экзамен"
+            size="m"
+            view="primary"
+            onClick={handleAssign}
+            disabled={!assignScenario || !assignStudent}
+          />
+        </div>
+        {assignments.length === 0 ? (
+          <Text as="p" size="m" view="ghost">Нет назначенных экзаменов</Text>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {assignments.map(a => (
+              <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 8, background: '#f5f5f5', borderRadius: 4 }}>
+                <div>
+                  <Text size="m" weight="semibold">{a.scenarioName}</Text>
+                  <Text size="s" view="ghost">Студент: {a.studentId} | Назначил: {a.assignedBy} | {new Date(a.assignedAt).toLocaleString('ru-RU')}</Text>
+                </div>
+                <Button label="Снять" size="xs" view="ghost" onClick={() => handleRemoveAssignment(a.id)} />
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
