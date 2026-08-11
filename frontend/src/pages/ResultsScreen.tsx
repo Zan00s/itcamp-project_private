@@ -3,15 +3,9 @@ import { Card } from '@consta/uikit/Card';
 import { Text } from '@consta/uikit/Text';
 import { Badge } from '@consta/uikit/Badge';
 import { Button } from '@consta/uikit/Button';
-import { ProgressLine } from '@consta/uikit/ProgressLine';
 import { SnackBar } from '@consta/uikit/SnackBar';
 import { IconChatStroked } from '@consta/icons/IconChatStroked';
 import type { VerdictDTO } from '../api/client';
-
-const COMPONENT_LABELS: Record<string, string> = {
-  correctness: 'Корректность',
-  timing: 'Скорость',
-};
 
 export default function ResultsScreen() {
   const location = useLocation();
@@ -52,24 +46,6 @@ export default function ResultsScreen() {
               <Badge iconLeft={IconChatStroked} label="ИИ-оценка использована" status="system" />
             </div>
           )}
-        </Card>
-
-        <Card col={1} verticalSpace="l" horizontalSpace="l">
-          <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 16 }}>Разбивка по компонентам</Text>
-          {Object.entries(verdict.componentScores)
-            .filter(([comp]) => comp === 'correctness' || comp === 'timing')
-            .map(([comp, score]) => {
-              const pct = Math.round(score * 100);
-              return (
-                <div key={comp} style={{ marginBottom: 16 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <Text size="m">{COMPONENT_LABELS[comp] || comp}</Text>
-                    <Text size="m" weight="semibold">{pct}%</Text>
-                  </div>
-                  <ProgressLine value={pct} size="m" />
-                </div>
-              );
-            })}
         </Card>
 
         {verdict.achievements.length > 0 && (

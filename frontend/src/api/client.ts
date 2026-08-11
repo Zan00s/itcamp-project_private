@@ -92,6 +92,17 @@ export interface SessionDTO {
   active: boolean;
 }
 
+export interface SessionEventDTO {
+  timestamp: number;
+  eventType: 'ALARM' | 'WARNING' | 'AUTO_EVENT';
+  node: string;
+  nodeLabel: string;
+  action: string;
+  actionLabel: string;
+  value: number | null;
+  result: string;
+}
+
 export interface ActionRequestDTO {
   node: string;
   action: string;
@@ -212,6 +223,11 @@ export const apiClient = {
     return data;
   },
 
+  async getSessionEvents(sessionId: string): Promise<SessionEventDTO[]> {
+    const { data } = await api.get(`/sessions/${sessionId}/events`);
+    return data;
+  },
+
   async listAllSessions(): Promise<SessionInfoDTO[]> {
     const { data } = await api.get('/sessions');
     return data;
@@ -234,6 +250,15 @@ export const apiClient = {
 
   async deleteScenario(id: string): Promise<void> {
     await api.delete(`/scenarios/${id}`);
+  },
+
+  async uploadDocxScenario(file: File): Promise<{ success: boolean; scenario?: ScenarioDTO; error?: string; rawText?: string; extractedText?: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/scenarios/upload-docx', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
   },
 
   async validateScenario(id: string): Promise<{ valid: boolean; errors: string[] }> {

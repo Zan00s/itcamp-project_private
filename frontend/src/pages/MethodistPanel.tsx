@@ -9,6 +9,7 @@ import { IconTrash } from '@consta/icons/IconTrash';
 import { IconCheck } from '@consta/icons/IconCheck';
 import { IconClose } from '@consta/icons/IconClose';
 import { IconChatStroked } from '@consta/icons/IconChatStroked';
+import { IconUpload } from '@consta/icons/IconUpload';
 import { apiClient, type ScenarioDTO } from '../api/client';
 
 interface PhaseEdit {
@@ -92,6 +93,8 @@ export default function MethodistPanel() {
   const [aiRawText, setAiRawText] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiContext, setAiContext] = useState('');
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{ success: boolean; scenarioName?: string; error?: string; extractedText?: string } | null>(null);
 
   useEffect(() => { load(); }, []);
 
@@ -155,6 +158,30 @@ export default function MethodistPanel() {
     catch (e: any) { setError(e.message); }
   };
 
+  const handleDocxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.docx')) {
+      setUploadResult({ success: false, error: 'Файл должен быть в формате .docx' });
+      return;
+    }
+    setUploadLoading(true);
+    setUploadResult(null);
+    try {
+      const res = await apiClient.uploadDocxScenario(file);
+      if (res.success && res.scenario) {
+        setUploadResult({ success: true, scenarioName: res.scenario.name, extractedText: res.extractedText });
+        await load();
+      } else {
+        setUploadResult({ success: false, error: res.error || 'Не удалось создать сценарий', extractedText: res.extractedText });
+      }
+    } catch (e: any) {
+      setUploadResult({ success: false, error: e?.response?.data?.message || e.message });
+    }
+    setUploadLoading(false);
+    e.target.value = '';
+  };
+
   const handleAiDraft = async () => {
     setAiLoading(true);
     try {
@@ -216,6 +243,38 @@ export default function MethodistPanel() {
             </Card>
             <Card col={1} verticalSpace="l" horizontalSpace="l">
               <Text as="h3" size="l" weight="semibold" style={{ marginBottom: 12 }}>🤖 ИИ-инструменты</Text>
+              <Card verticalSpace="m" horizontalSpace="m" style={{ background: '#f9f0ff', borderColor: '#d3adf3', marginBottom: 12 }}>
+                <Text size="m" weight="semibold" style={{ color: '#722ed1', marginBottom: 8 }}>📄 Загрузка сценария из DOCX</Text>
+                <Text size="s" view="ghost" style={{ marginBottom: 12 }}>
+                  Загрузите DOCX-файл с описанием ситуации (обычный текст без структуры).
+                  ИИ проанализирует текст и создаст структурированный сценарий автоматически.
+                </Text>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <Button label={uploadLoading ? 'Обработка...' : 'Выбрать DOCX-файл'} size="s" view="primary" iconLeft={IconUpload} loading={uploadLoading} onClick={() => document.getElementById('docx-upload-input')?.click()} />
+                  <input id="docx-upload-input" type="file" accept=".docx" onChange={handleDocxUpload} style={{ display: 'none' }} />
+                </label>
+                {uploadResult && (
+                  <div style={{ marginTop: 12 }}>
+                    {uploadResult.success ? (
+                      <Card verticalSpace="s" horizontalSpace="m" style={{ background: '#f6ffed', borderColor: '#b7eb8f' }}>
+                        <Text size="s" weight="semibold" style={{ color: '#52c41a' }}>✓ Сценарий создан: {uploadResult.scenarioName}</Text>
+                      </Card>
+                    ) : (
+                      <Card verticalSpace="s" horizontalSpace="m" style={{ background: '#fff1f0', borderColor: '#ffa39e' }}>
+                        <Text size="s" view="alert">✗ {uploadResult.error}</Text>
+                      </Card>
+                    )}
+                    {uploadResult.extractedText && (
+                      <details style={{ marginTop: 8 }}>
+                        <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: '#888' }}>Извлечённый текст из DOCX</summary>
+                        <pre style={{ fontSize: '0.75rem', maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', background: '#fafafa', padding: 8, borderRadius: 4, marginTop: 4 }}>
+                          {uploadResult.extractedText}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </Card>
               <Card verticalSpace="m" horizontalSpace="m" style={{ background: '#f9f0ff', borderColor: '#d3adf3' }}>
                 <Text size="m" weight="semibold" style={{ color: '#722ed1', marginBottom: 8 }}>🤖 Генерация черновика сценария</Text>
                 <Text size="s" view="ghost" style={{ marginBottom: 8 }}>

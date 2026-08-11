@@ -10,6 +10,8 @@ interface JournalEntry {
   value: number | null;
   result: string;
   chain: { node: string; changed: string[] }[];
+  eventType?: string;
+  isAuto?: boolean;
 }
 
 interface SimState {
@@ -30,6 +32,7 @@ interface SimState {
   endSession: () => Promise<void>;
   resetForNewAttempt: () => void;
   clearError: () => void;
+  pollEvents: () => Promise<void>;
 }
 
 export const useSimStore = create<SimState>((set, get) => ({
@@ -128,4 +131,30 @@ export const useSimStore = create<SimState>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+
+  pollEvents: async () => {
+    const { session, journal } = get();
+    if (!session) return;
+    try {
+      const events = await apiClient.getSessionEvents(session.id);
+      const knownTimestamps = new Set(journal.filter(j => j.isAuto).map(j => j.timestamp));
+      const newEvents: JournalEntry[] = events
+        .filter(e => !knownTimestamps.has(e.timestamp))
+        .map(e => ({
+          timestamp: e.timestamp,
+          node: e.node,
+          action: e.action,
+          value: e.value,
+          result: e.result || 'Alarm',
+          chain: [],
+          eventType: e.eventType,
+          isAuto: true,
+        }));
+      if (newEvents.length > 0) {
+        set({ journal: [...journal, ...newEvents].sort((a, b) => a.timestamp - b.timestamp) });
+      }
+    } catch {
+      // ignore polling errors
+    }
+  },
 }));
