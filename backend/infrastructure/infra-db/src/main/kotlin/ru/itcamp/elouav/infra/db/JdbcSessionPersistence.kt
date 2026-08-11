@@ -14,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import ru.itcamp.elouav.app.session.Session
 import ru.itcamp.elouav.app.session.SessionPersistence
 import ru.itcamp.elouav.scoring.model.Verdict
+import ru.itcamp.elouav.scoring.model.VerdictType
 import ru.itcamp.elouav.shared.NodeId
 import ru.itcamp.elouav.shared.PortId
 import ru.itcamp.elouav.shared.ScenarioId
@@ -30,6 +31,17 @@ class ClosedRangeDeserializer : JsonDeserializer<ClosedRange<Double>>() {
         return start..end
     }
 }
+
+data class VerificationVerdict(
+    val sessionId: String,
+    val scenarioId: String,
+    val attempt: Int,
+    val verdict: String,
+    val score: Int,
+    val achievements: List<String> = emptyList(),
+    val feedback: List<String> = emptyList(),
+    val aiUsed: Boolean = false,
+)
 
 class JdbcSessionPersistence(
     private val jdbc: JdbcTemplate,
@@ -66,7 +78,7 @@ class JdbcSessionPersistence(
 
     override fun save(session: Session) {
         val graphJson = mapper.writeValueAsString(session.graph)
-        val verdictJson = session.verdict?.let { mapper.writeValueAsString(it) }
+        val verdictJson = session.verdict?.let { sanitizeVerdict(it) }?.let { mapper.writeValueAsString(it) }
         jdbc.update(
             """INSERT INTO sessions (id, scenario_id, user_id, attempt, active, started_at, ended_at, graph, verdict)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
@@ -91,6 +103,17 @@ class JdbcSessionPersistence(
         )
     }
 
+    private fun sanitizeVerdict(verdict: Verdict): VerificationVerdict = VerificationVerdict(
+        sessionId = verdict.sessionId.value,
+        scenarioId = verdict.scenarioId,
+        attempt = verdict.attempt,
+        verdict = verdict.verdict.name,
+        score = verdict.score.total,
+        achievements = verdict.achievements,
+        feedback = verdict.feedback.map { it.text },
+        aiUsed = verdict.aiUsed,
+    )
+
     override fun loadAll(): List<Session> {
         return try {
             val rows = jdbc.query(
@@ -99,7 +122,7 @@ class JdbcSessionPersistence(
                 val graphJson = rs.getString("graph")
                 val graph: Graph = mapper.readValue(graphJson)
                 val verdictJson = rs.getString("verdict")
-                val verdict: Verdict? = verdictJson?.let { mapper.readValue(it) }
+                val verdict: Verdict? = verdictJson?.let { mapper.readValue<VerificationVerdict>(it) }
                 Session(
                     id = SessionId(rs.getString("id")),
                     scenarioId = ScenarioId(rs.getString("scenario_id")),

@@ -2,6 +2,22 @@ import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts';
 
 let _userManager: UserManager | null = null;
 
+function clearAuthStorageEntries(storage: Storage) {
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
+    if (key && /oidc|userManager|auth/i.test(key)) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => storage.removeItem(key));
+}
+
+function clearAuthState() {
+  clearAuthStorageEntries(window.localStorage);
+  clearAuthStorageEntries(window.sessionStorage);
+}
+
 function getConfig() {
   const authority = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8180/realms/elouav';
   const redirectUri = import.meta.env.VITE_REDIRECT_URI || window.location.origin + '/callback';
@@ -13,7 +29,7 @@ function getConfig() {
     post_logout_redirect_uri: postLogoutUri,
     response_type: 'code',
     scope: 'openid profile roles',
-    userStore: new WebStorageStateStore({ store: window.localStorage }),
+    userStore: new WebStorageStateStore({ store: window.sessionStorage }),
   };
 }
 
@@ -30,21 +46,34 @@ export async function login() {
 
 export async function logout() {
   const mgr = getUserManager();
+  const postLogoutUri = import.meta.env.VITE_POST_LOGOUT_URI || window.location.origin + '/';
+
   try {
     const user = await mgr.getUser();
+    clearAuthState();
+    try {
+      await mgr.removeUser();
+    } catch {
+      // ignore
+    }
+    try {
+      mgr.stopSilentRenew();
+    } catch {
+      // ignore
+    }
+
     if (user?.id_token) {
       await mgr.signoutRedirect({
         id_token_hint: user.id_token,
-        post_logout_redirect_uri: import.meta.env.VITE_POST_LOGOUT_URI || window.location.origin + '/',
+        post_logout_redirect_uri: postLogoutUri,
       });
-    } else {
-      await mgr.removeUser();
-      window.location.href = '/';
+      return;
     }
   } catch {
-    try { await mgr.removeUser(); } catch { /* ignore */ }
-    window.location.href = '/';
+    clearAuthState();
   }
+
+  window.location.replace(postLogoutUri);
 }
 
 export async function getUser(): Promise<User | null> {

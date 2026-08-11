@@ -2,6 +2,7 @@ package ru.itcamp.elouav.infra.web.controller
 
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ResponseEntity
+import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.*
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -23,6 +24,8 @@ import ru.itcamp.elouav.audit.model.EventType
 import ru.itcamp.elouav.audit.model.ActionResult
 import ru.itcamp.elouav.audit.port.AuditRepository
 import ru.itcamp.elouav.infra.web.dto.*
+import ru.itcamp.elouav.infra.web.security.AiRequestRateLimiter
+import ru.itcamp.elouav.infra.web.security.PromptSanitizer
 import ru.itcamp.elouav.scoring.model.ScoringProfile
 import ru.itcamp.elouav.shared.*
 import ru.itcamp.elouav.sim.model.ActionRequest
@@ -51,6 +54,7 @@ class ApiController(
 ) {
 
     private val log = LoggerFactory.getLogger("ru.itcamp.elouav.api")
+    private val aiRateLimiter = AiRequestRateLimiter(maxRequests = 10, windowMs = 60_000)
 
     @GetMapping("/health/keycloak")
     fun checkKeycloak(): ResponseEntity<Map<String, String>> {
@@ -113,11 +117,15 @@ class ApiController(
     @PostMapping("/sessions")
     fun startSession(
         @RequestBody req: StartSessionRequestDTO,
-        @RequestHeader("X-User-Id") userId: String,
+        authentication: Authentication,
     ): ResponseEntity<SessionDTO> {
         if (req.scenarioId.isBlank()) {
             throw IllegalArgumentException("scenarioId не может быть пустым")
         }
+
+        val userId = AuthUserIdResolver.resolveUserId(authentication)
+            ?: throw IllegalStateException("Пользователь не аутентифицирован")
+
         if (userId.isBlank()) {
             throw IllegalArgumentException("userId не может быть пустым")
         }
@@ -158,9 +166,17 @@ class ApiController(
     }
 
     @GetMapping("/sessions/{id}")
-    fun getSession(@PathVariable id: String): ResponseEntity<SessionDTO> {
+    fun getSession(
+        @PathVariable id: String,
+        authentication: Authentication,
+    ): ResponseEntity<SessionDTO> {
         val session = sessionStore.get(SessionId(id))
             ?: return ResponseEntity.notFound().build()
+
+        if (!isSessionAccessible(session, authentication)) {
+            return ResponseEntity.status(403).build()
+        }
+
         return ResponseEntity.ok(SessionDTO(
             id = session.id.value,
             scenarioId = session.scenarioId.value,
@@ -174,6 +190,7 @@ class ApiController(
     fun applyAction(
         @PathVariable id: String,
         @RequestBody req: ActionRequestDTO,
+        authentication: Authentication,
     ): ResponseEntity<SimulationStepDTO> {
         if (req.node.isBlank()) {
             throw IllegalArgumentException("node не может быть пустым")
@@ -266,9 +283,20 @@ class ApiController(
     }
 
     @PostMapping("/sessions/{id}/end")
-    fun endSession(@PathVariable id: String): ResponseEntity<VerdictDTO> {
+    fun endSession(
+        @PathVariable id: String,
+        authentication: Authentication,
+    ): ResponseEntity<VerdictDTO> {
         val session = sessionStore.get(SessionId(id))
             ?: throw NoSuchElementException("Сессия $id не найдена")
+
+        if (!isSessionAccessible(session, authentication)) {
+            throw AccessDeniedException("Нет доступа к сессии $id")
+        }
+
+        if (!hasWriteAccess(authentication)) {
+            throw AccessDeniedException("Недостаточно прав для завершения сессии")
+        }
 
         if (!session.active) {
             session.verdict?.let { return ResponseEntity.ok(DTOMapper.toVerdictDTO(it)) }
@@ -309,8 +337,15 @@ class ApiController(
     }
 
     @GetMapping("/sessions")
-    fun listSessions(): ResponseEntity<List<SessionInfoDTO>> {
-        val sessions = sessionStore.all().sortedByDescending { it.startedAt }
+    fun listSessions(authentication: Authentication): ResponseEntity<List<SessionInfoDTO>> {
+        val currentUserId = AuthUserIdResolver.resolveUserId(authentication)
+            ?: return ResponseEntity.status(401).build()
+
+        val isAdmin = authentication.authorities.any { it.authority.equals("ROLE_admin", ignoreCase = true) }
+        val sessions = sessionStore.all()
+            .filter { isAdmin || it.userId == UserId(currentUserId) }
+            .sortedByDescending { it.startedAt }
+
         return ResponseEntity.ok(sessions.map { s ->
             val durationSec = s.endedAt?.let { Duration.between(s.startedAt, it).seconds }
                 ?: Duration.between(s.startedAt, Clock.now()).seconds
@@ -343,9 +378,17 @@ class ApiController(
     }
 
     @GetMapping("/sessions/{id}/state")
-    fun getSessionState(@PathVariable id: String): ResponseEntity<GraphDTO> {
+    fun getSessionState(
+        @PathVariable id: String,
+        authentication: Authentication,
+    ): ResponseEntity<GraphDTO> {
         val session = sessionStore.get(SessionId(id))
             ?: throw NoSuchElementException("Сессия $id не найдена")
+
+        if (!isSessionAccessible(session, authentication)) {
+            throw AccessDeniedException("Нет доступа к сессии $id")
+        }
+
         return ResponseEntity.ok(DTOMapper.toGraphDTO(session.graph))
     }
 
@@ -418,8 +461,27 @@ class ApiController(
     // === AI endpoints ===
 
     @PostMapping("/ai/scenario-draft")
-    fun generateScenarioDraft(@RequestBody req: ScenarioDraftRequestDTO): ResponseEntity<ScenarioDraftDTO> {
+    fun generateScenarioDraft(
+        @RequestBody req: ScenarioDraftRequestDTO,
+        authentication: Authentication,
+    ): ResponseEntity<ScenarioDraftDTO> {
+        if (!isAiAllowed(authentication)) {
+            return ResponseEntity.status(403).build()
+        }
+
+        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication.name
+        if (!aiRateLimiter.allow(clientKey)) {
+            log.warn("[AI rate-limit] blocked client={} for scenario-draft", clientKey)
+            return ResponseEntity.status(429).build()
+        }
+
+        if (!isPayloadWithinLimits(req.topic, req.context, maxTextLength = 4000, maxPayloadSize = 5000)) {
+            return ResponseEntity.status(413).build()
+        }
+
         log.info("[AI scenario-draft] topic={} difficulty={} timeout={} contextLen={}", req.topic, req.difficulty, req.timeoutSec, req.context?.length)
+        val sanitizedTopic = PromptSanitizer.sanitize(req.topic, maxLength = 120)
+        val sanitizedContext = PromptSanitizer.sanitize(req.context, maxLength = 4000)
         val systemPrompt = """
             Ты — методист тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
             Создай черновик сценария обучения в формате JSON.
@@ -438,12 +500,12 @@ class ApiController(
         val contextBlock = req.context?.takeIf { it.isNotBlank() }?.let {
             """
             Контекст пользователя (учти при создании сценария):
-            $it
+            $sanitizedContext
             """.trimIndent()
         } ?: "Контекст не задан — создай сценарий с полного пуска установки (холодный старт)."
 
         val userPrompt = """
-            Тема сценария: ${req.topic ?: "Пуск установки"}
+            Тема сценария: ${sanitizedTopic ?: "Пуск установки"}
             Сложность: ${req.difficulty ?: 2} (от 1 до 3)
             Таймаут: ${req.timeoutSec ?: 1800} секунд
 
@@ -471,8 +533,27 @@ class ApiController(
     }
 
     @PostMapping("/ai/explain-action")
-    fun explainAction(@RequestBody req: ExplainActionRequestDTO): ResponseEntity<ExplainActionDTO> {
+    fun explainAction(
+        @RequestBody req: ExplainActionRequestDTO,
+        authentication: Authentication,
+    ): ResponseEntity<ExplainActionDTO> {
+        if (!isAiAllowed(authentication)) {
+            return ResponseEntity.status(403).build()
+        }
+
+        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication.name
+        if (!aiRateLimiter.allow(clientKey)) {
+            log.warn("[AI rate-limit] blocked client={} for explain-action", clientKey)
+            return ResponseEntity.status(429).build()
+        }
+
+        if (!isPayloadWithinLimits(req.node, req.action, maxTextLength = 200, maxPayloadSize = 4000)) {
+            return ResponseEntity.status(413).build()
+        }
+
         log.info("[AI explain-action] node={} action={} value={} chainSize={}", req.node, req.action, req.value, req.chain?.size)
+        val sanitizedNode = PromptSanitizer.sanitize(req.node, maxLength = 80)
+        val sanitizedAction = PromptSanitizer.sanitize(req.action, maxLength = 80)
         val systemPrompt = """
             Ты — ИИ-ассистент тренажёра оператора НПЗ (установка ЭЛОУ-АВТ).
             Объясни студенту, как его действие повлияло на установку.
@@ -481,11 +562,13 @@ class ApiController(
 
         val chainText = (req.chain ?: emptyList()).joinToString("; ") { c ->
             val changed = (c["changed"] as? List<*>)?.joinToString(", ") ?: ""
-            "${c["node"]}: изменены $changed"
+            val node = PromptSanitizer.sanitize(c["node"]?.toString(), maxLength = 80) ?: "узел"
+            val changedSafe = PromptSanitizer.sanitize(changed, maxLength = 200) ?: ""
+            "$node: изменены $changedSafe"
         }
 
         val userPrompt = """
-            Действие: ${req.action ?: "действие"} на узле ${req.node ?: "узел"}${req.value?.let { ", значение: $it" } ?: ""}
+            Действие: ${sanitizedAction ?: "действие"} на узле ${sanitizedNode ?: "узел"}${req.value?.let { ", значение: $it" } ?: ""}
             Каскадные изменения: ${if (chainText.isNotBlank()) chainText else "нет"}
             Объясни физический смысл и влияние на установку.
         """.trimIndent()
@@ -499,9 +582,32 @@ class ApiController(
     }
 
     @PostMapping("/ai/session-analysis")
-    fun analyzeSession(@RequestBody req: SessionAnalysisRequestDTO): ResponseEntity<SessionAnalysisDTO> {
+    fun analyzeSession(
+        @RequestBody req: SessionAnalysisRequestDTO,
+        authentication: Authentication,
+    ): ResponseEntity<SessionAnalysisDTO> {
+        if (!isAiAllowed(authentication)) {
+            return ResponseEntity.status(403).build()
+        }
+
+        val clientKey = AuthUserIdResolver.resolveUserId(authentication) ?: authentication.name
+        if (!aiRateLimiter.allow(clientKey)) {
+            log.warn("[AI rate-limit] blocked client={} for session-analysis", clientKey)
+            return ResponseEntity.status(429).build()
+        }
+
         val session = sessionStore.get(SessionId(req.sessionId))
             ?: throw NoSuchElementException("Сессия не найдена")
+
+        if (!isSessionAccessible(session, authentication)) {
+            return ResponseEntity.status(403).build()
+        }
+
+        if (!isPayloadWithinLimits(req.sessionId, maxTextLength = 80, maxPayloadSize = 2000)) {
+            return ResponseEntity.status(413).build()
+        }
+
+        val sanitizedSessionId = PromptSanitizer.sanitize(req.sessionId, maxLength = 80)
 
         log.info("[AI session-analysis] sessionId={} user={} scenario={} score={}",
             req.sessionId, session.userId.value, session.scenarioId.value, session.verdict?.score?.total)
@@ -515,14 +621,19 @@ class ApiController(
         val verdict = session.verdict
         val score = verdict?.score?.total ?: 0
         val feedbackText = verdict?.feedback?.joinToString("; ") { it.text } ?: "нет обратной связи"
+        val sanitizedSessionId = PromptSanitizer.sanitize(req.sessionId, maxLength = 80) ?: "unknown"
+        val sanitizedUserId = PromptSanitizer.sanitize(session.userId.value, maxLength = 80) ?: "unknown"
+        val sanitizedScenarioId = PromptSanitizer.sanitize(session.scenarioId.value, maxLength = 80) ?: "unknown"
+        val sanitizedFeedbackText = PromptSanitizer.sanitize(feedbackText, maxLength = 2000) ?: "нет обратной связи"
 
         val userPrompt = """
-            Студент: ${session.userId.value}
-            Сценарий: ${session.scenarioId.value}
+            Студент: $sanitizedUserId
+            Сценарий: $sanitizedScenarioId
+            Идентификатор сессии: $sanitizedSessionId
             Попытка: ${session.attempt}
             Балл: $score/100
             Результат: ${verdict?.verdict?.name ?: "не завершён"}
-            Обратная связь от системы: $feedbackText
+            Обратная связь от системы: $sanitizedFeedbackText
             Дай разбор и 2-3 рекомендации.
         """.trimIndent()
 
@@ -544,9 +655,17 @@ class ApiController(
     }
 
     @GetMapping("/sessions/{id}/hint")
-    fun getContextHint(@PathVariable id: String): ResponseEntity<Map<String, Any>> {
+    fun getContextHint(
+        @PathVariable id: String,
+        authentication: Authentication,
+    ): ResponseEntity<Map<String, Any>> {
         val session = sessionStore.get(SessionId(id))
             ?: throw NoSuchElementException("Сессия $id не найдена")
+
+        if (!isSessionAccessible(session, authentication)) {
+            throw AccessDeniedException("Нет доступа к сессии $id")
+        }
+
         val scenarioResult = loadScenarioUseCase.execute(session.scenarioId)
         if (scenarioResult is AppResult.Err) {
             throw NoSuchElementException("Сценарий не найден")
@@ -558,6 +677,12 @@ class ApiController(
         val userActions = auditRecords.filter { it.eventType == EventType.ACTION }
         val hint = computeContextHint(scenario, userActions, session.graph)
         return ResponseEntity.ok(hint)
+    }
+
+    private fun isSessionAccessible(session: Session, authentication: Authentication): Boolean {
+        val currentUserId = AuthUserIdResolver.resolveUserId(authentication) ?: return false
+        val isAdmin = authentication.authorities.any { it.authority.equals("ROLE_admin", ignoreCase = true) }
+        return isAdmin || session.userId == UserId(currentUserId)
     }
 
     private val actionLabelsRu = mapOf(
@@ -643,10 +768,26 @@ class ApiController(
         return g
     }
 
-    private fun extractJson(content: String): String {
-        var s = content.trim()
-        if (s.startsWith("```")) {
-            val firstNl = s.indexOf("\n")
+    private fun isAiAllowed(authentication: Authentication): Boolean {
+        if (!authentication.isAuthenticated) {
+            return false
+        }
+        val isAdmin = authentication.authorities.any { it.authority.equals("ROLE_admin", ignoreCase = true) }
+        val isStudent = authentication.authorities.any { it.authority.equals("ROLE_student", ignoreCase = true) }
+        val isInstructor = authentication.authorities.any { it.authority.equals("ROLE_instructor", ignoreCase = true) }
+        val isMethodist = authentication.authorities.any { it.authority.equals("ROLE_methodist", ignoreCase = true) }
+        return isAdmin || isStudent || isInstructor || isMethodist
+    }
+
+    private fun isPayloadWithinLimits(vararg values: String?, maxTextLength: Int, maxPayloadSize: Int): Boolean {
+        val totalLength = values.filterNotNull().sumOf { it.length }
+        if (totalLength > maxPayloadSize) return false
+        return values.all { it == null || it.length <= maxTextLength }
+    }
+
+    private fun hasWriteAccess(authentication: Authentication): Boolean {
+        val authorities = authentication.authorities.map { it.authority.lowercase() }
+        return authorities.contains("role_student") || authorities.contains("role_admin") || authorities.contains("role_instructor")
             if (firstNl >= 0) s = s.substring(firstNl + 1)
             val fenceEnd = s.lastIndexOf("```")
             if (fenceEnd >= 0) s = s.substring(0, fenceEnd)

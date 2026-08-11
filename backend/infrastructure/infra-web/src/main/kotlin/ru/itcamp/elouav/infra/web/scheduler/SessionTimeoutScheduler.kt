@@ -52,6 +52,24 @@ class SessionTimeoutScheduler(
                     val auditRecords = (auditResult as? AppResult.Ok)?.value ?: emptyList()
                     val hadCritical = auditRecords.any { it.eventType == EventType.ALARM }
 
+                    auditRepo.append(
+                        ru.itcamp.elouav.audit.model.AuditRecord(
+                            sessionId = session.id,
+                            scenarioId = session.scenarioId,
+                            userId = session.userId,
+                            attempt = session.attempt,
+                            timestamp = Clock.now(),
+                            eventType = EventType.SYSTEM,
+                            data = ru.itcamp.elouav.audit.model.AuditData(
+                                node = ru.itcamp.elouav.shared.NodeId("system"),
+                                action = "session_timeout",
+                                value = null,
+                                result = ru.itcamp.elouav.audit.model.ActionResult.ALARM,
+                                chain = emptyList(),
+                            ),
+                        )
+                    )
+
                     val verdict = scoreAttemptUseCase.execute(
                         sessionId = session.id,
                         scenarioId = session.scenarioId.value,

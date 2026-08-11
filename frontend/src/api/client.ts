@@ -14,9 +14,6 @@ api.interceptors.request.use(async (config) => {
     if (user?.access_token) {
       config.headers['Authorization'] = `Bearer ${user.access_token}`;
     }
-    if (user?.profile?.preferred_username) {
-      config.headers['X-User-Id'] = user.profile.preferred_username;
-    }
   } catch {
     // ignore
   }
