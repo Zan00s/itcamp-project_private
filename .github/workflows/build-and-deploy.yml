@@ -192,5 +192,5 @@ jobs:
             printf '%s=%s\n' "$variable" "${!variable}" >> .env
           done
           docker compose pull backend frontend
-          docker compose up -d --remove-orphans
+          docker compose  -p itcamp-project up -d --remove-orphans
           docker compose ps
