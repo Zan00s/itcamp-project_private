@@ -52,6 +52,7 @@ self-hosted runner и передает его в `docker compose`.
 | `KC_HOSTNAME_STRICT` | `false` |
 | `KC_PROXY_HEADERS` | `xforwarded` |
 | `KEYCLOAK_URL` | `https://auth.it-camp-2026.ru` |
+| `CORS_ALLOWED_ORIGIN_PATTERNS` | `*` |
 | `VITE_API_BASE` | `https://api.it-camp-2026.ru/api` |
 | `VITE_KEYCLOAK_URL` | `https://auth.it-camp-2026.ru/realms/elouav` |
 | `VITE_REDIRECT_URI` | `https://it-camp-2026.ru/callback` |
@@ -146,6 +147,8 @@ self-hosted runner и передает его в `docker compose`.
 | Переменная | По умолчанию | Описание |
 |-----------|-------------|----------|
 | `JAVA_OPTS` | `-Xmx256m` | Параметры JVM для backend. `-Xmx256m` — максимум 256MB heap. Для слабых серверов можно уменьшить до `-Xmx128m` |
+
+| `CORS_ALLOWED_ORIGIN_PATTERNS` | `*` | Шаблоны Origin для CORS в backend (через запятую). Пример для ограниченного доступа: `https://it-camp-2026.ru,https://www.it-camp-2026.ru,https://api.it-camp-2026.ru` |
 
 ---
 

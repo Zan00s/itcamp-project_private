@@ -3,6 +3,7 @@ package ru.itcamp.elouav.infra.auth
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
 import org.springframework.security.web.SecurityFilterChain
@@ -17,21 +18,20 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 @Configuration
 @EnableWebSecurity
 @Profile("!dev")
-class SecurityConfig {
+class SecurityConfig(
+    @Value("\${CORS_ALLOWED_ORIGIN_PATTERNS:*}") private val corsAllowedOriginPatterns: String,
+) {
 
     @Bean
     fun corsConfigurationSource(): UrlBasedCorsConfigurationSource {
         val source = UrlBasedCorsConfigurationSource()
         val config = CorsConfiguration()
-        val allowedOrigins = listOf(
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        )
-        config.allowedOrigins = allowedOrigins
+        config.allowedOriginPatterns = corsAllowedOriginPatterns
+            .split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
         config.allowedMethods = listOf("GET", "POST", "PUT", "DELETE", "OPTIONS")
-        config.allowedHeaders = listOf("Authorization", "Content-Type", "Accept")
+        config.allowedHeaders = listOf("*")
         config.allowCredentials = true
         source.registerCorsConfiguration("/**", config)
         return source
