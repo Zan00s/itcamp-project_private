@@ -14,7 +14,7 @@
     "@consta/uikit": "^5.33.3",
     "@tanstack/react-table": "^8.20.6",
     "antd": "^5.23.0",
-    "axios": "^1.7.9",
+    "axios": "^1.20.0",
     "oidc-client-ts": "^3.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
